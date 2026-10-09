@@ -2,32 +2,44 @@ import sys
 import time
 import cv2
 
-# On Windows use the DirectShow backend; on Mac/Linux the default is fine.
 backend = cv2.CAP_DSHOW if sys.platform.startswith("win") else cv2.CAP_ANY
-cap = cv2.VideoCapture(0, backend)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-cap.set(cv2.CAP_PROP_FPS, 30)
 
-if not cap.isOpened():
-    print("Camera did not open. Close Zoom/Teams/browser tabs and try again.")
-    sys.exit(1)
+# (width, height, use MJPG?)  MJPG is a compressed format many webcams need for 30 FPS.
+settings = [
+    (640, 480, False),
+    (640, 480, True),
+    (1280, 720, False),
+    (1280, 720, True),
+]
 
-# Read back what the camera REALLY gives us (not what we asked for).
-width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+for width, height, mjpg in settings:
+    cap = cv2.VideoCapture(0, backend)
+    if not cap.isOpened():
+        print("Camera did not open")
+        sys.exit(1)
+    if mjpg:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_FPS, 30)
 
-# Measure the real FPS over 90 frames.
-frames = 0
-start = time.time()
-while frames < 90:
-    ok, frame = cap.read()
-    if not ok:
-        break
-    frames += 1
-seconds = time.time() - start
-cap.release()
+    # Warm-up: the first frames are slow while the camera adjusts exposure.
+    for _ in range(30):
+        cap.read()
 
-print(f"Resolution: {width} x {height}")
-print(f"Measured FPS: {frames / seconds:.1f}")
-print("Write these two numbers and your laptop model in your notes.")
+    frames = 0
+    start = time.time()
+    while frames < 90:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        frames += 1
+    seconds = time.time() - start
+
+    real_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    real_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    name = "MJPG" if mjpg else "default"
+    print(f"asked {width}x{height} {name:7s} -> got {real_w}x{real_h}, "
+          f"{frames / seconds:.1f} FPS")
