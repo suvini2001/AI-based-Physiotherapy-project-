@@ -1,0 +1,6 @@
+# Shared settings for the cleaning pipeline.
+# Change a value here and every script picks it up.
+
+visibility_threshold: 0.70   # drop landmarks with visibility below this (step 1.4)
+filter_cutoff_hz: 6          # smoothing filter cut-off in Hz (step 1.5)
+max_gap_frames: 5            # longest gap A's gap-filling will repair (step 1.6)
