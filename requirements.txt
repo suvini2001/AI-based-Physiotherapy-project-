@@ -6,3 +6,4 @@ scipy
 matplotlib
 pytest
 pyyaml
+pandas
