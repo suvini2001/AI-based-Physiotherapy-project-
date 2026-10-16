@@ -11,6 +11,7 @@ import numpy as np
 
 sys.path.append("capture")
 sys.path.append("pose")
+sys.path.append("vision")
 from camera import FrameSource, FpsCounter          # your step 1.2
 from landmarks import LandmarkExtractor             # your step 1.3
 from visibility import mask_low_visibility, load_config   # B, step 1.4
@@ -32,6 +33,7 @@ def main():
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--mirror", action="store_true", help="display only")
     ap.add_argument("--no-overlay", action="store_true", help="for the FPS comparison")
+    ap.add_argument("--fast", action="store_true", help="replay as fast as possible (for FPS tests)")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -82,7 +84,12 @@ def main():
         t4 = time.perf_counter()
 
         cv2.imshow("demo_cv (press q to quit)", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        if src.is_live or args.fast:
+            wait_ms = 1                                    # live camera: no extra wait
+        else:                                              # replay at the clip's real speed
+            used_ms = (time.perf_counter() - t0) * 1000
+            wait_ms = max(1, int(1000 / src.fps() - used_ms))
+        if cv2.waitKey(wait_ms) & 0xFF == ord("q"):
             break
         for k, v in zip(stage, (t1 - t0, t2 - t1, t3 - t2, t4 - t3)):
             stage[k] += v

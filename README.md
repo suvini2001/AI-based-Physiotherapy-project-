@@ -64,3 +64,13 @@ Real clip (median 5 + Savitzky-Golay 9,3, clipped to 0-180):
 - Causal spike filter; choose the live filter (causal Butterworth vs One Euro).
 - Joint test of the full chain on the same clip.
 - Agree: Milestone 2 `exercises.yaml` format, and who records the reference clips.
+
+## max_gap frames (data/gap_fill_choice.png)
+max_gap_frames = 5 (0.17 s)\ plot data/gap_fill_choice.png; tolerance 8°; one easy clip, re-check on harder clips.
+
+| Run | Resolution | Mean FPS | Notes |
+|---  |---|---|---|
+| Replay clip, --fast | 640x480 | 41.5 | pose 19.0 ms/frame |
+| Live, with overlay | 640x480 | 29.0 | camera-limited (~30 FPS), pose 20.5 ms/frame |
+| Live, no overlay | 640x480 | ? | fill in |
+| Live, with overlay | 1280x720 | ? | fill in |
