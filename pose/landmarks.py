@@ -24,5 +24,22 @@ class LandmarkExtractor:
                 out[i] = [lm.x, lm.y, lm.z, lm.visibility]
         return out
 
+
+    def process_with_world(self, frame_bgr):
+        """Return (norm, world). Both float32, shape (33, 4), all NaN if no person.
+        norm  = x, y (0-1 of the image), z (relative depth), visibility   <- same as process()
+        world = x, y, z in METRES (origin = middle of the hips), visibility
+        Both come from the SAME MediaPipe call, so this adds almost no time."""
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)   # do NOT mirror-flip before this
+        result = self.pose.process(rgb)
+        norm = np.full((33, 4), np.nan, dtype=np.float32)
+        world = np.full((33, 4), np.nan, dtype=np.float32)
+        if result.pose_landmarks:
+            for i, lm in enumerate(result.pose_landmarks.landmark):
+                norm[i] = [lm.x, lm.y, lm.z, lm.visibility]
+        if result.pose_world_landmarks:
+            for i, lm in enumerate(result.pose_world_landmarks.landmark):
+                world[i] = [lm.x, lm.y, lm.z, lm.visibility]
+        return norm, world
     def close(self):
         self.pose.close()
