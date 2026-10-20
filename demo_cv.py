@@ -1,9 +1,10 @@
-"""demo_cv.py - Milestone 1 demo: webcam or clip -> landmarks -> clean -> angle -> overlay.
-Run from the main project folder:
-  python demo_cv.py --exercise elbow --side right          (live webcam)
+"""demo_cv.py - webcam or clip -> landmarks -> clean -> angle -> overlay.
+  python demo_cv.py --exercise elbow --side right          (live webcam, variant A = old 2D angle)
+  python demo_cv.py --variant B                             (3D angle from world landmarks)
+  python demo_cv.py --calibration data/user_calibration.json
   python demo_cv.py --source data/elbow_A_laptop.mp4        (replay a clip)
   python demo_cv.py --no-overlay                            (FPS without drawing)
-"""
+Commit 1 (Person A): the loop, variants A and B, calibration. Commit 2 (Person B): yaw message, variant C, gate."""
 import argparse, sys, time
 from collections import deque
 import cv2
@@ -12,16 +13,63 @@ import numpy as np
 sys.path.append("capture")
 sys.path.append("pose")
 sys.path.append("vision")
-from camera import FrameSource, FpsCounter          # your step 1.2
-from landmarks import LandmarkExtractor             # your step 1.3
-from visibility import mask_low_visibility, load_config   # B, step 1.4
-from filters import OneEuroFilter                   # B, step 1.5 (live-capable)
-from angles import angle                            # B, step 1.8
-from gap_fill import fill_gaps                      # you, step 1.6
-from overlay import JOINTS, draw_angle, draw_skeleton, put_big_text   # you, step 1.9
+from camera import FrameSource, FpsCounter
+from landmarks import LandmarkExtractor
+from visibility import mask_low_visibility, load_config
+from filters import OneEuroFilter
+from angles import angle
+from angles_world import mask_world_like
+from calibration import load_params, apply_calibration
+from gap_fill import fill_gaps
+from vision.overlay import JOINTS, draw_angle, draw_skeleton, put_big_text
 
 WINDOW = 15            # recent frames kept for gap filling (about 0.5 s)
-SPIKE_WINDOW = 5       # median of the last 5 angles removes one-frame spikes (lag ~2 frames)
+SPIKE_WINDOW = 5       # median of the last 5 angles removes one-frame spikes
+VARIANTS = ["A", "B"]  # Person B adds "C" in the second commit
+
+
+class AnglePipeline:
+    """One frame in, one cleaned angle out. Separate from the window so it can be tested without a camera."""
+
+    def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None):
+        self.joint, self.variant, self.size = joint, variant, size
+        self.thr, self.max_gap, self.calibration = thr, max_gap, calibration
+        self.win_norm, self.win_world = deque(maxlen=WINDOW), deque(maxlen=WINDOW)
+        self.recent = deque(maxlen=SPIKE_WINDOW)
+        self.smoother = OneEuroFilter(fs=fps)
+
+    def raw_angle(self, clean_norm, clean_world):
+        pts_n = [clean_norm[i] for i in self.joint]
+        if any(np.isnan(p[:3]).any() for p in pts_n):
+            return None
+        if self.variant == "A":                               # old way: 2D pixels
+            px = [np.array([p[0] * self.size[0], p[1] * self.size[1]]) for p in pts_n]
+            return float(angle(*px))
+        if self.variant == "B":                               # 3D world landmarks, metres
+            pts_w = [clean_world[i, :3] for i in self.joint]
+            if any(np.isnan(p).any() for p in pts_w):
+                return None
+            return float(angle(*pts_w))
+        # --- Person B plugs variant C (yaw-corrected) here, in the second commit ---
+        raise ValueError(f"unknown variant {self.variant}")
+
+    def step(self, norm, world):
+        """norm, world: (33, 4) for one frame. Returns (clean_norm, angle_or_None)."""
+        masked = mask_low_visibility(norm[None], self.thr)[0]
+        self.win_norm.append(masked)
+        self.win_world.append(mask_world_like(world[None], masked[None])[0])
+        clean = fill_gaps(np.stack(self.win_norm), self.max_gap)[-1]
+        clean_w = fill_gaps(np.stack(self.win_world), self.max_gap)[-1]
+        raw = self.raw_angle(clean, clean_w)
+        # --- Person B plugs the bone-length / yaw gate here: invalid frame -> raw = None ---
+        if raw is None:
+            return clean, None
+        self.recent.append(raw)
+        ang = self.smoother(float(np.median(self.recent)))
+        ang = min(max(ang, 0.0), 180.0)
+        if self.calibration is not None:
+            ang = float(apply_calibration(ang, self.calibration))
+        return clean, ang
 
 
 def main():
@@ -29,25 +77,24 @@ def main():
     ap.add_argument("--source", default="0")
     ap.add_argument("--exercise", choices=JOINTS, default="elbow")
     ap.add_argument("--side", choices=["left", "right"], default="right")
+    ap.add_argument("--variant", choices=VARIANTS, default="A")
+    ap.add_argument("--calibration", default=None, help="path to data/user_calibration.json")
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--mirror", action="store_true", help="display only")
     ap.add_argument("--no-overlay", action="store_true", help="for the FPS comparison")
-    ap.add_argument("--fast", action="store_true", help="replay as fast as possible (for FPS tests)")
     args = ap.parse_args()
 
     cfg = load_config()
     thr, max_gap = cfg["visibility_threshold"], cfg["max_gap_frames"]
+    calibration = load_params(args.calibration) if args.calibration else None
 
     source = int(args.source) if args.source.isdigit() else args.source
     src = FrameSource(source, args.width, args.height)
-    w, h = src.size()                                   # real size, used for pixel maths
+    size = src.size()
     extractor = LandmarkExtractor()
     joint = JOINTS[args.exercise][args.side]
-
-    window = deque(maxlen=WINDOW)
-    recent = deque(maxlen=SPIKE_WINDOW)
-    smoother = OneEuroFilter(fs=src.fps())
+    pipe = AnglePipeline(joint, args.variant, size, src.fps(), thr, max_gap, calibration)
     counter = FpsCounter()
     stage = dict(read=0.0, pose=0.0, clean=0.0, draw=0.0)
     n, t_start = 0, time.perf_counter()
@@ -58,20 +105,9 @@ def main():
         if not ok:
             break
         t1 = time.perf_counter()
-        pose = extractor.process(frame)                  # BEFORE any flip
+        norm, world = extractor.process_with_world(frame)   # BEFORE any flip
         t2 = time.perf_counter()
-
-        pose = mask_low_visibility(pose[None], thr)[0]   # B: drop weak points (NaN)
-        window.append(pose)
-        clean = fill_gaps(np.stack(window), max_gap)[-1] # you: repair short holes
-        pts = [clean[i] for i in joint]
-        if any(np.isnan(p[:3]).any() for p in pts):
-            ang = None                                   # joint missing: show "--"
-        else:
-            px = [np.array([p[0] * w, p[1] * h]) for p in pts]   # pixels, like B's joint_angle
-            recent.append(float(angle(*px)))
-            ang = smoother(float(np.median(recent)))
-            ang = min(max(ang, 0.0), 180.0)
+        clean, ang = pipe.step(norm, world)
         t3 = time.perf_counter()
 
         fps = counter.tick()
@@ -80,16 +116,13 @@ def main():
                 frame = cv2.flip(frame, 1)               # flip only for display
             draw_skeleton(frame, clean, mirror=args.mirror)
             draw_angle(frame, clean, joint, ang, mirror=args.mirror)
+            label = f"variant {args.variant}" + (" + calibrated" if calibration else "")
+            put_big_text(frame, label, (20, 100), 0.8, (255, 255, 255))
         put_big_text(frame, f"FPS {fps:.0f}", (20, 60), 1.4, (255, 255, 0))
         t4 = time.perf_counter()
 
         cv2.imshow("demo_cv (press q to quit)", frame)
-        if src.is_live or args.fast:
-            wait_ms = 1                                    # live camera: no extra wait
-        else:                                              # replay at the clip's real speed
-            used_ms = (time.perf_counter() - t0) * 1000
-            wait_ms = max(1, int(1000 / src.fps() - used_ms))
-        if cv2.waitKey(wait_ms) & 0xFF == ord("q"):
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
         for k, v in zip(stage, (t1 - t0, t2 - t1, t3 - t2, t4 - t3)):
             stage[k] += v

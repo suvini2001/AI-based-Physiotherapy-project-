@@ -1,0 +1,23 @@
+{
+  "curve_version": "identity",
+  "knots_raw": [
+    0.0,
+    180.0
+  ],
+  "knots_corrected": [
+    0.0,
+    180.0
+  ],
+  "offset": null,
+  "view_class": null,
+  "date": "2026-10-20T20:26:22",
+  "yaw_at_capture": null,
+  "straight_check": {
+    "status": "warn",
+    "n": 123,
+    "raw_median": 93.3887885852109,
+    "calibrated_median": 93.3887885852109,
+    "message": "Straight arm reads 93 deg (expected about 175). Check camera position."
+  },
+  "angle_mode": "2d"
+}
