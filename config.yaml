@@ -4,3 +4,22 @@
 visibility_threshold: 0.70   # drop landmarks with visibility below this (step 1.4)
 filter_cutoff_hz: 6          # smoothing filter cut-off in Hz (step 1.5)
 max_gap_frames: 5            # longest gap A's gap-filling will repair (step 1.6)
+
+# B1 / B6 – view check and yaw gate
+view_check:
+  warn_deg: 30.0             # amber warning when body yaw exceeds this
+  block_deg: 50.0            # red warning; gate rejects most frames above this
+
+# B4 / B6 – bone-length gate
+bone_gate:
+  jump_frac: 0.40            # reject frame if bone length jumps > 40 % from median
+  min_frac:  0.05            # reject frame if bone shorter than 5 % of median
+
+# A7 – calibration screen
+calibration:
+  countdown_seconds: 3.0
+  hold_seconds: 3.0
+  expected_straight_deg: 175.0
+  straight_tolerance_deg: 15.0
+  curve_file: data/population_curve.json
+  out_file: data/user_calibration.json
