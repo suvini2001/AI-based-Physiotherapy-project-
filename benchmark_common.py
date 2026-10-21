@@ -2,12 +2,71 @@
 import glob
 import numpy as np
 import pandas as pd
+from scipy.signal import butter, filtfilt
 from angles import angle
 from filters import fill_gaps
 
 VIEW_ORDER = ["front", "half-profile", "profile", "side"]
 ROW_COLUMNS = ["variant", "video", "side", "cam", "ex", "view", "person",
                "n", "coverage", "mae", "rmse", "bias", "r", "share_gt20"]
+
+
+def butterworth_filter(data, fs=30.0, cutoff=6.0, order=2, causal=False):
+    """Zero-phase Butterworth low-pass filter using scipy.signal.filtfilt.
+
+    Replaces causal filtering with non-causal zero-phase filtering for offline
+    benchmark evaluation to eliminate phase lag / latency against ground truth.
+
+    Parameters
+    ----------
+    data : array_like
+        Input signal (e.g. angle series).
+    fs : float, optional
+        Sampling frequency in Hz (default: 30.0).
+    cutoff : float, optional
+        Cutoff frequency in Hz (default: 6.0).
+    order : int, optional
+        Filter order (default: 2).
+    causal : bool, optional
+        Maintained for API compatibility. In benchmark evaluation, zero-phase
+        scipy.signal.filtfilt is used instead of causal filtering.
+
+    Returns
+    -------
+    np.ndarray
+        Filtered signal with zero phase delay.
+    """
+    arr = np.asarray(data, float)
+    if len(arr) == 0:
+        return arr.copy()
+    nan_mask = np.isnan(arr)
+    if nan_mask.all():
+        return arr.copy()
+
+    filled = fill_gaps(arr.copy())
+    nyq = 0.5 * fs
+    normal_cutoff = min(cutoff / nyq, 0.99)
+    b, a = butter(order, normal_cutoff, btype="low", analog=False)
+
+    padlen = 3 * max(len(a), len(b))
+    if len(filled) <= padlen:
+        res = filled
+    else:
+        res = filtfilt(b, a, filled)
+
+    res[nan_mask] = np.nan
+    return res
+
+
+def filter_signal(data, fs=30.0, cutoff=6.0, order=2):
+    """Zero-phase filtering alias using scipy.signal.filtfilt."""
+    return butterworth_filter(data, fs=fs, cutoff=cutoff, order=order)
+
+
+def apply_filter(ang, fs=30.0, cutoff=6.0, order=2):
+    """Apply zero-phase Butterworth filter (scipy.signal.filtfilt) to angle data."""
+    return butterworth_filter(ang, fs=fs, cutoff=cutoff, order=order)
+
 
 
 def load_truth_array(path, names):
@@ -43,11 +102,14 @@ def overlap(a, b, lag):
     return a[-lag:-lag + n], b[:n]
 
 
-def best_lag(pred, truth, max_lag=30):
+def best_lag(pred, truth, max_lag=30, filter_signals=False, fs=30.0, cutoff=6.0):
     if np.isnan(pred).all() or np.isnan(truth).all():
         return 0, -2.0
     prep = lambda x: (lambda y: y - y.mean())(fill_gaps(np.asarray(x, float).copy()))
     a, b = prep(pred), prep(truth)
+    if filter_signals:
+        a = butterworth_filter(a, fs=fs, cutoff=cutoff)
+        b = butterworth_filter(b, fs=fs, cutoff=cutoff)
     best, best_r = 0, -2.0
     for lag in range(-max_lag, max_lag + 1):
         x, y = overlap(a, b, lag)

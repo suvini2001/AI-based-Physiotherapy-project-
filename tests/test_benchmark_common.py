@@ -13,6 +13,9 @@ from benchmark_common import (
     results_table,
     to_markdown,
     delta,
+    butterworth_filter,
+    filter_signal,
+    apply_filter,
     ROW_COLUMNS
 )
 
@@ -109,3 +112,71 @@ def test_delta():
     df = pd.DataFrame(data)
     d = delta(df, new="B", old="A", metric="mae")
     assert pytest.approx(d["side"], 0.01) == -10.0
+
+
+def test_butterworth_filter_zero_phase():
+    fs = 30.0
+    t = np.arange(0, 4, 1 / fs)
+    clean = 90.0 + 30.0 * np.sin(2 * np.pi * 0.5 * t)
+    noise = 4.0 * np.sin(2 * np.pi * 8.0 * t)
+    noisy = clean + noise
+
+    filtered = butterworth_filter(noisy, fs=fs, cutoff=3.0, order=2)
+
+    # Check zero-phase property: peak of filtfilt signal matches clean signal peak exactly
+    peak_clean = np.argmax(clean[:30])
+    peak_filtered = np.argmax(filtered[:30])
+    assert peak_clean == peak_filtered
+
+    # Check high-frequency noise is attenuated
+    rmse_noisy = np.sqrt(np.mean((noisy - clean) ** 2))
+    rmse_filtered = np.sqrt(np.mean((filtered - clean) ** 2))
+    assert rmse_filtered < rmse_noisy
+
+
+def test_butterworth_filter_with_nans():
+    fs = 30.0
+    t = np.arange(0, 4, 1 / fs)
+    clean = 90.0 + 30.0 * np.sin(2 * np.pi * 0.5 * t)
+    nan_signal = clean.copy()
+    nan_indices = [5, 6, 7, 25, 26]
+    nan_signal[nan_indices] = np.nan
+
+    filtered = butterworth_filter(nan_signal, fs=fs, cutoff=6.0, order=2)
+
+    # NaNs should remain at the original NaN locations
+    assert np.isnan(filtered[nan_indices]).all()
+    # Non-NaN locations should be valid numbers
+    valid_indices = [i for i in range(len(clean)) if i not in nan_indices]
+    assert np.isfinite(filtered[valid_indices]).all()
+
+
+def test_butterworth_filter_edge_cases():
+    # Empty array
+    assert len(butterworth_filter([], fs=30.0)) == 0
+
+    # All NaNs
+    all_nan = np.array([np.nan, np.nan, np.nan])
+    res_nan = butterworth_filter(all_nan, fs=30.0)
+    assert np.isnan(res_nan).all()
+
+    # Short signal (less than padlen)
+    short = np.array([10.0, 20.0, 30.0])
+    res_short = butterworth_filter(short, fs=30.0)
+    assert len(res_short) == 3
+
+    # Aliases
+    sig = np.linspace(50, 100, 30)
+    np.testing.assert_array_equal(filter_signal(sig, fs=30.0), butterworth_filter(sig, fs=30.0))
+    np.testing.assert_array_equal(apply_filter(sig, fs=30.0), butterworth_filter(sig, fs=30.0))
+
+
+def test_best_lag_with_filtering():
+    t = np.linspace(0, 4 * np.pi, 100)
+    truth = 90 + 30 * np.sin(t)
+    pred = np.roll(truth, 3)
+    pred[:3] = np.nan
+
+    lag, r = best_lag(pred, truth, max_lag=10, filter_signals=True, fs=30.0, cutoff=6.0)
+    assert lag == -3
+    assert r > 0.95
