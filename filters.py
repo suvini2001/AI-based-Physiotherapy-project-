@@ -4,13 +4,19 @@ from scipy.ndimage import median_filter
 
 
 def butterworth_filter(data, fs, cutoff=6.0, order=2, causal=False):
-    """fs = real frame rate (about 29.4-29.5). causal=True is for live use."""
+    arr = np.asarray(data, float)
+    nan_mask = np.isnan(arr)
+    if nan_mask.all():
+        return arr.copy()
+    filled = fill_gaps(arr.copy())          # NaN ඉවත් කරනවා
     b, a = butter(order, cutoff / (fs / 2), btype="low")
     if causal:
-        zi = lfilter_zi(b, a) * data[0]          # start at the first value, not at 0
-        return lfilter(b, a, data, zi=zi)[0]
-    return filtfilt(b, a, data)
-
+        zi = lfilter_zi(b, a) * filled[0]
+        res = lfilter(b, a, filled, zi=zi)[0]
+    else:
+        res = filtfilt(b, a, filled)
+    res[nan_mask] = np.nan                  # මුල් NaN ආපසු දානවා
+    return res
 
 def savitzky_golay_filter(data, window_length=9, polyorder=3):
     """window_length must be odd and larger than polyorder."""
