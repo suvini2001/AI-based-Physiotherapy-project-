@@ -9,7 +9,7 @@ from filters import fill_gaps
 VIEW_ORDER = ["front", "half-profile", "profile", "side"]
 ROW_COLUMNS = ["variant", "video", "side", "cam", "ex", "view", "person",
                "n", "coverage", "mae", "rmse", "bias", "r", "share_gt20",
-               "lag", "lag_r"]
+               "lag", "lag_r", "gt_range"]
 
 
 def butterworth_filter(data, fs=30.0, cutoff=6.0, order=2, causal=False):
