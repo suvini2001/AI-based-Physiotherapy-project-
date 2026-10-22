@@ -147,7 +147,7 @@ def planarity(landmarks, side='right', size=(640, 480), L_up=None, L_fo=None):
     for (a, b), L in (((sh, el), L_up), ((wr, el), L_fo)):
         dx, dy = _segment(landmarks, a, b, size)
         out.append(np.hypot(dx, dy) / sc / L)
-    return np.minimum(out[0], out[1])          # the worse of the two segments
+    return np.minimum(out[0], out[1])          # the worse of the two segments  
 
 
 # ---------------------------------------------------------------------- lift
