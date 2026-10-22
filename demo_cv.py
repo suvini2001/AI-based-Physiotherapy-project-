@@ -25,7 +25,7 @@ from vision.overlay import JOINTS, draw_angle, draw_skeleton, put_big_text
 
 WINDOW = 15            # recent frames kept for gap filling (about 0.5 s)
 SPIKE_WINDOW = 5       # median of the last 5 angles removes one-frame spikes
-VARIANTS = ["A", "B"]  # Person B adds "C" in the second commit
+VARIANTS = ["A", "B", "C"]  # Person B adds "C" in the second commit
 
 
 class AnglePipeline:
@@ -51,8 +51,12 @@ class AnglePipeline:
                 return None
             return float(angle(*pts_w))
         # --- Person B plugs variant C (yaw-corrected) here, in the second commit ---
+        if self.variant == "C":
+            from angles_3d import elbow_angle_yaw_corrected
+            return float(elbow_angle_yaw_corrected(world[None], self.side)[0]) \
+                if not np.isnan(clean_world).any() else None
         raise ValueError(f"unknown variant {self.variant}")
-
+    
     def step(self, norm, world):
         """norm, world: (33, 4) for one frame. Returns (clean_norm, angle_or_None)."""
         masked = mask_low_visibility(norm[None], self.thr)[0]
@@ -62,6 +66,14 @@ class AnglePipeline:
         clean_w = fill_gaps(np.stack(self.win_world), self.max_gap)[-1]
         raw = self.raw_angle(clean, clean_w)
         # --- Person B plugs the bone-length / yaw gate here: invalid frame -> raw = None ---
+        # bone-length / yaw gate (variant E)
+        if raw is not None and self.variant in ("C", "E"):
+            from angles_3d import bone_length_gate
+            world_frame = np.stack(self.win_world)[-1]
+            gate_ok = bone_length_gate(world_frame[None], self.side)[0]
+            if not gate_ok:
+                raw = None
+
         if raw is None:
             return clean, None
         self.recent.append(raw)
@@ -118,6 +130,16 @@ def main():
             draw_angle(frame, clean, joint, ang, mirror=args.mirror)
             label = f"variant {args.variant}" + (" + calibrated" if calibration else "")
             put_big_text(frame, label, (20, 100), 0.8, (255, 255, 255))
+            # yaw warning (B7)
+            if args.variant in ("B", "C"):
+                try:
+                    from angles_3d import body_yaw
+                    from capture.view_check import draw_yaw_message, draw_yaw_bar
+                    yaw = body_yaw(world)
+                    draw_yaw_message(frame, yaw)
+                    draw_yaw_bar(frame, yaw)
+                except ImportError:
+                    pass
         put_big_text(frame, f"FPS {fps:.0f}", (20, 60), 1.4, (255, 255, 0))
         t4 = time.perf_counter()
 

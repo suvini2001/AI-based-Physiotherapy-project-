@@ -54,12 +54,29 @@
 - MediaPipe 0.10.14 needs Python 3.12 or older
 - The on-screen FPS during a replay is only the window speed, not the clip speed
 
-## Open questions for B
-- Who records the reference clips in Milestone 2, and on which camera?
-- Knee exercise: standing knee flexion (heel to buttock) or mini-squat?
-- Keep 640x480 or try for 720p with a better light or an external camera?
+## Week 2 results (Person A/B combined — Chamodi)
 
-## Next (week 2)
-- 1.6 Gap-filling function
-- 1.9 Skeleton overlay and demo_cv.py
-- Joint test with B
+### Variants implemented
+| Variant | File | Description |
+|---|---|---|
+| A | angles.py | 2D pixel angle (baseline from Week 1) |
+| B | angles_world.py | 3D world landmark angle |
+| C | angles_3d.py | 3D angle ÷ cos(body yaw), capped at 60° |
+| E (gate) | angles_3d.py | bone-length gate, rejects frames with >40% jump or <5% min |
+
+### Pipeline additions this week
+- `pose_normalise.py` — distance/size invariant landmark normalisation (A)
+- `calibration.py` — population correction curve with LOPO cross-validation (A)
+- `capture/calibrate_ui.py` — countdown calibration screen, saves user_calibration.json (A)
+- `gap_fill.py` — linear interpolation for gaps ≤ 5 frames (merged Week 2 PR)
+- `demo_cv.py` — full live pipeline: variants A, B, C; calibration; yaw warning; gate
+- `angles_3d.py` — body_yaw, elbow_angle_yaw_corrected, bone_length_gate (B)
+- `capture/view_check.py` — real-time yaw warning overlay (B)
+
+### Open items
+- B2: cam18 extraction (needs Person B's videos on Drive)
+- B5/A6: benchmark runs on REHAB24-6 dataset (needs dataset access in Colab)
+- B6: threshold tuning on PM_013, PM_014, PM_025, PM_040 recordings
+- Protractor validation at 90/120/160 deg (carried from Week 1)
+- Live filter final decision (One Euro currently used as placeholder)
+- exercises.yaml format agreement for Milestone 2
