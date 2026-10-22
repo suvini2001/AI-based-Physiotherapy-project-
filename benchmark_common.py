@@ -3,7 +3,7 @@ import glob
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt
-from angles import angle
+from angles import angle, elbow_angle_3d_ordered
 from filters import fill_gaps
 
 VIEW_ORDER = ["front", "half-profile", "profile", "side"]

@@ -24,10 +24,17 @@ def _fill_1d(series, max_gap):
     return s
 
 
-def fill_gaps(landmarks, max_gap=5):
-    """Linearly fill gaps of <= max_gap frames. Longer gaps stay NaN."""
-    out = landmarks.copy()               # never edit the caller's array
-    for j in range(out.shape[1]):        # 33 landmarks
-        for c in range(4):               # x, y, z AND visibility
-            out[:, j, c] = _fill_1d(out[:, j, c], max_gap)
-    return out
+import numpy as np
+import pandas as pd
+
+def fill_gaps(arr, max_gap=5, method='cubicspline'):
+    """
+    Fills short NaN gaps up to `max_gap` frames using cubic spline interpolation
+    while leaving longer occluded segments as NaN.
+    """
+    s = pd.Series(arr, dtype=float)
+    if method == 'cubicspline' and s.notna().sum() >= 4:
+        filled = s.interpolate(method='cubicspline', limit=max_gap, limit_area='inside')
+    else:
+        filled = s.interpolate(method='linear', limit=max_gap, limit_area='inside')
+    return np.clip(filled.to_numpy(), 0.0, 180.0)
