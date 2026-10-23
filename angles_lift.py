@@ -153,7 +153,8 @@ def planarity(landmarks, side='right', size=(640, 480), L_up=None, L_fo=None):
 
 # ---------------------------------------------------------------------- lift
 def lift_segments(landmarks, world, side='right', size=(640, 480),
-                  L_up=None, L_fo=None, sign_window=9,full_plane=0.95, depth_smooth=5):
+                  L_up=None, L_fo=None, sign_window=9,
+                  full_plane=0.95, depth_smooth=5):
     """Lift both arm segments to 3D. Returns (u, v, ratio).
 
     u = elbow -> shoulder, v = elbow -> wrist, each (frames, 3) in
