@@ -105,7 +105,7 @@ export class LgbmModel {
       } else {
         if (!Number.isFinite(x)) x = 0.0;
         if (mt === MISSING_ZERO &&
-            x > -this.zeroThreshold && x <= this.zeroThreshold) {
+          x > -this.zeroThreshold && x <= this.zeroThreshold) {
           go = tree.d[nd] ? tree.l[nd] : tree.r[nd];
         }
       }
@@ -233,8 +233,8 @@ export class SessionScale {
   get ready() {
     return this.frozen != null ||
       (this.sw.length >= this.o.calibFrames &&
-       this.pxUpper.length >= this.o.minBoneFrames &&
-       this.pxFore.length >= this.o.minBoneFrames);
+        this.pxUpper.length >= this.o.minBoneFrames &&
+        this.pxFore.length >= this.o.minBoneFrames);
   }
 
   /** Compute and freeze. Call once `ready`; idempotent. */
@@ -339,7 +339,7 @@ export class FeatureStream {
     const oppEl = get(opp[1]);
     if (this.prevElbow && pts[1] && oppEl) {
       if (dist3(pts[1], this.prevElbow) > this.o.swapJump &&
-          dist3(pts[1], oppEl) < this.o.swapNear) {
+        dist3(pts[1], oppEl) < this.o.swapNear) {
         pts = [null, null, null];
       }
     }
@@ -349,7 +349,7 @@ export class FeatureStream {
     if (pts[0] && pts[1] && pts[2]) {
       const lu = dist3(pts[0], pts[1]), lf = dist3(pts[2], pts[1]);
       const bad = lu < this.o.minBoneLen || lu > this.o.maxBoneLen ||
-                  lf < this.o.minBoneLen || lf > this.o.maxBoneLen;
+        lf < this.o.minBoneLen || lf > this.o.maxBoneLen;
       if (bad) pts = [null, null, null];
     }
     return pts;
@@ -446,38 +446,44 @@ export class FeatureStream {
     const planMin = Math.min(planUpper, planFore);
 
     // --- the 2.5D lift, port of lift_segments + elbow_angle_lifted ---
-    const seg = (dx, dy, L, signKey) => {
+    //
+    // Order matters and is easy to get wrong: lift_segments applies the
+    // in-plane deadband to the WHOLE series first, and only then takes the
+    // rolling median. Applying the deadband at the centre frame and skipping
+    // the median there is a different function — it cost 14.8 deg in the
+    // port test. _rolling_median also restores NaN wherever the CENTRE
+    // sample was NaN, so a NaN frame cannot be filled in by its neighbours.
+    const depthAt = (g, L, upper) => {
+      const dx = upper ? g.dxU : g.dxF;
+      const dy = upper ? g.dyU : g.dyF;
+      const planar = Math.hypot(dx, dy) / sc;
+      if (!Number.isFinite(planar)) return NaN;
+      const dz = Math.sqrt(Math.max(0, L * L - planar * planar));
+      return planar / L > this.o.fullPlane ? 0 : dz;      // deadband first
+    };
+
+    const seg = (dx, dy, L, upper, signKey) => {
       if (!(L > 0)) return null;
       const x = dx / sc, y = dy / sc;
       const planar = Math.hypot(x, y);
       if (!Number.isFinite(planar)) return null;
       const ratio = planar / L;
-      let dz = Math.sqrt(Math.max(0, L * L - planar * planar));
-      // in-plane deadband: dz is ill-conditioned as planar -> L
-      if (ratio > this.o.fullPlane) dz = 0;
-      else {
-        // rolling median on the DEPTH, not the finished angle
-        const w = centredWindow(this.buf, i, this.o.depthSmooth, (g) => {
-          const px = Math.hypot(signKey === 'signU' ? g.dxU : g.dxF,
-                                signKey === 'signU' ? g.dyU : g.dyF) / sc;
-          if (!Number.isFinite(px)) return NaN;
-          const r = px / L;
-          return r > this.o.fullPlane ? 0
-            : Math.sqrt(Math.max(0, L * L - px * px));
-        });
-        const m = nanMedian(w);
-        if (Number.isFinite(m)) dz = m;
-      }
-      // majority sign over a centred window
+
+      const centre = depthAt(f, L, upper);
+      let dz = nanMedian(centredWindow(this.buf, i, this.o.depthSmooth,
+        (g) => depthAt(g, L, upper)));
+      if (!Number.isFinite(centre)) dz = NaN;   // NaN in -> NaN out
+
+      // the model decides only which way; majority sign over a centred window
       const signs = centredWindow(this.buf, i, this.o.signWindow,
-                                  (g) => g[signKey]);
+        (g) => g[signKey]);
       const acc = signs.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
       const s = Math.sign(acc) || 1;
       return { v: [x, y, dz * s], ratio };
     };
 
-    const u = seg(f.dxU, f.dyU, lUpper, 'signU');
-    const v = seg(f.dxF, f.dyF, lFore, 'signF');
+    const u = seg(f.dxU, f.dyU, lUpper, true, 'signU');
+    const v = seg(f.dxF, f.dyF, lFore, false, 'signF');
     let angleLift = NaN;
     if (u && v) {
       const ratio = Math.min(u.ratio, v.ratio);
