@@ -32,7 +32,8 @@ ARM = {           # (shoulder, elbow, wrist)
     'left':  (11, 13, 15),
 }
 
-__all__ = ['shoulder_width', 'robust_scale', 'bone_lengths', 'lift_segments',
+__all__ = ['shoulder_width', 'robust_scale', 'bone_lengths',
+           'elbow_angle_hybrid', 'lift_segments',
            'elbow_angle_lifted', 'planarity']
 
 
@@ -147,20 +148,40 @@ def planarity(landmarks, side='right', size=(640, 480), L_up=None, L_fo=None):
     for (a, b), L in (((sh, el), L_up), ((wr, el), L_fo)):
         dx, dy = _segment(landmarks, a, b, size)
         out.append(np.hypot(dx, dy) / sc / L)
-    return np.minimum(out[0], out[1])          # the worse of the two segments  
+    return np.minimum(out[0], out[1])          # the worse of the two segments
 
 
 # ---------------------------------------------------------------------- lift
 def lift_segments(landmarks, world, side='right', size=(640, 480),
-                  L_up=None, L_fo=None, sign_window=5):
+                  L_up=None, L_fo=None, sign_window=9,
+                  full_plane=0.95, depth_smooth=5):
     """Lift both arm segments to 3D. Returns (u, v, ratio).
 
     u = elbow -> shoulder, v = elbow -> wrist, each (frames, 3) in
     shoulder-width units. ratio is the planarity of the worse segment.
 
     `world` supplies nothing but the sign of each segment's depth difference.
-    A short rolling majority over `sign_window` frames keeps a noisy frame from
+    A rolling majority over `sign_window` frames keeps a noisy frame from
     flipping the arm through the image plane; set sign_window=0 to disable.
+
+    Two guards on the depth term, both for the same reason. Differentiating
+    dz = sqrt(L^2 - planar^2) gives
+
+        d(dz)/d(planar) = -planar / sqrt(L^2 - planar^2)
+
+    which runs to infinity as planar approaches L, that is, as the arm comes
+    back into the camera plane. Exactly there the depth should be zero and the
+    plain 2D angle is already correct, so a small error in planar or in L turns
+    into a large error in dz. On the REHAB24-6 benchmark this cost the lift
+    1.7 deg of accuracy in frontal views and dropped correlation from 0.91 to
+    0.81 overall, while still removing almost all of the projection bias
+    (+17.69 deg to -1.20 deg in profile views).
+
+      * `full_plane`   - above this planarity the segment is treated as lying
+                         in the image plane and dz is set to zero.
+      * `depth_smooth` - rolling median over dz, which is the noisy component;
+                         smoothing the depth rather than the finished angle
+                         keeps the angle's shape intact.
     """
     sh, el, wr = ARM[side]
     lm = np.asarray(landmarks, float)
@@ -185,6 +206,13 @@ def lift_segments(landmarks, world, side='right', size=(640, 480),
             dz = np.sqrt(np.clip(L * L - planar * planar, 0.0, None))
             ratio = planar / L
 
+            # in-plane deadband: dz is ill-conditioned here and should be 0
+            if full_plane is not None:
+                dz = np.where(ratio > full_plane, 0.0, dz)
+            # smooth the depth, not the angle
+            if depth_smooth and depth_smooth > 1:
+                dz = _rolling_median(dz, depth_smooth)
+
         # the model only decides which way
         if wd is not None:
             s = np.sign(wd[:, a, 2] - wd[:, b, 2])
@@ -197,6 +225,19 @@ def lift_segments(landmarks, world, side='right', size=(640, 480),
         ratios.append(ratio)
 
     return vecs[0], vecs[1], np.minimum(ratios[0], ratios[1])
+
+
+def _rolling_median(x, win):
+    """Rolling median that leaves NaN alone."""
+    x = np.asarray(x, float)
+    k = int(win) | 1
+    pad = k // 2
+    padded = np.pad(x, pad, mode='edge')
+    stack = np.stack([padded[i:i + len(x)] for i in range(k)], axis=0)
+    with np.errstate(invalid='ignore'):
+        out = np.nanmedian(stack, axis=0)
+    out[~np.isfinite(x)] = np.nan
+    return out
 
 
 def _rolling_sign(s, win):
@@ -215,7 +256,8 @@ def _rolling_sign(s, win):
 
 
 def elbow_angle_lifted(landmarks, world, side='right', size=(640, 480),
-                       L_up=None, L_fo=None, min_ratio=0.30, sign_window=5):
+                       L_up=None, L_fo=None, min_ratio=0.30, sign_window=9,
+                       full_plane=0.95, depth_smooth=5):
     """Elbow angle in degrees from the bone-length-constrained 3D lift.
 
     Frames where the arm is too foreshortened for the lift to be conditioned
@@ -226,7 +268,8 @@ def elbow_angle_lifted(landmarks, world, side='right', size=(640, 480),
     Parameters mirror `angles.elbow_angle` so the two can be swapped in place.
     """
     u, v, ratio = lift_segments(landmarks, world, side, size,
-                                L_up, L_fo, sign_window)
+                                L_up, L_fo, sign_window,
+                                full_plane, depth_smooth)
 
     nu = np.linalg.norm(u, axis=1)
     nv = np.linalg.norm(v, axis=1)
