@@ -64,6 +64,54 @@ export const ML_DEFAULTS = {
 
 export const LAG = 7;     // (max(stdWindow, signWindow, depthSmooth) - 1) / 2
 
+// ------------------------------------------------------------ causal filter
+/**
+ * The repo's butterworth_filter(..., causal=True), exactly.
+ *
+ * The benchmark's default path uses scipy filtfilt, which runs forward AND
+ * backward. That needs the whole clip, so no live system can reproduce it:
+ * measured on a real frontal recording, the browser's unfiltered angle sat a
+ * mean of 0.21 deg and a maximum of 20.6 deg away from the filtered series
+ * the model was trained on. Since angle_2d carries 40.7% of the model's gain,
+ * that gap has to be closed on the TRAINING side, by switching the benchmark
+ * to causal=True — and then this class reproduces it bit for bit.
+ *
+ * Verified against scipy: the closed-form second-order Butterworth
+ * coefficients match signal.butter to 1e-16 at 15/25/30/60 fps, the
+ * steady-state initial condition matches signal.lfilter_zi to 1e-16, and this
+ * recursion matches signal.lfilter to 0.0 over 600 samples.
+ */
+export class CausalButter {
+  constructor(fs, cutoff = 6.0) { this.setFs(fs, cutoff); }
+
+  setFs(fs, cutoff = this.cutoff ?? 6.0) {
+    this.fs = fs; this.cutoff = cutoff;
+    const wn = Math.min(cutoff / (fs / 2), 0.99);     // filters.py clamp
+    const K = Math.tan((Math.PI * wn) / 2);
+    const S = Math.SQRT2;
+    const norm = 1 / (1 + S * K + K * K);
+    this.b = [K * K * norm, 2 * K * K * norm, K * K * norm];
+    this.a = [1, 2 * (K * K - 1) * norm, (1 - S * K + K * K) * norm];
+    this.reset();
+  }
+
+  /** @param {number} x a finite, gap-filled sample */
+  push(x) {
+    const [b0, b1, b2] = this.b;
+    const a1 = this.a[1], a2 = this.a[2];
+    if (this.z0 === null) {           // lfilter_zi(b, a) * x[0]
+      this.z0 = (b1 + b2 - a1 - a2) * x;
+      this.z1 = (b2 - a2) * x;
+    }
+    const y = b0 * x + this.z0;
+    this.z0 = b1 * x + this.z1 - a1 * y;
+    this.z1 = b2 * x - a2 * y;
+    return y;
+  }
+
+  reset() { this.z0 = null; this.z1 = 0; }
+}
+
 // -------------------------------------------------------------------- model
 const MISSING_NONE = 0, MISSING_ZERO = 1, MISSING_NAN = 2;
 
@@ -105,7 +153,7 @@ export class LgbmModel {
       } else {
         if (!Number.isFinite(x)) x = 0.0;
         if (mt === MISSING_ZERO &&
-          x > -this.zeroThreshold && x <= this.zeroThreshold) {
+            x > -this.zeroThreshold && x <= this.zeroThreshold) {
           go = tree.d[nd] ? tree.l[nd] : tree.r[nd];
         }
       }
@@ -233,8 +281,8 @@ export class SessionScale {
   get ready() {
     return this.frozen != null ||
       (this.sw.length >= this.o.calibFrames &&
-        this.pxUpper.length >= this.o.minBoneFrames &&
-        this.pxFore.length >= this.o.minBoneFrames);
+       this.pxUpper.length >= this.o.minBoneFrames &&
+       this.pxFore.length >= this.o.minBoneFrames);
   }
 
   /** Compute and freeze. Call once `ready`; idempotent. */
@@ -339,7 +387,7 @@ export class FeatureStream {
     const oppEl = get(opp[1]);
     if (this.prevElbow && pts[1] && oppEl) {
       if (dist3(pts[1], this.prevElbow) > this.o.swapJump &&
-        dist3(pts[1], oppEl) < this.o.swapNear) {
+          dist3(pts[1], oppEl) < this.o.swapNear) {
         pts = [null, null, null];
       }
     }
@@ -349,7 +397,7 @@ export class FeatureStream {
     if (pts[0] && pts[1] && pts[2]) {
       const lu = dist3(pts[0], pts[1]), lf = dist3(pts[2], pts[1]);
       const bad = lu < this.o.minBoneLen || lu > this.o.maxBoneLen ||
-        lf < this.o.minBoneLen || lf > this.o.maxBoneLen;
+                  lf < this.o.minBoneLen || lf > this.o.maxBoneLen;
       if (bad) pts = [null, null, null];
     }
     return pts;
@@ -471,12 +519,12 @@ export class FeatureStream {
 
       const centre = depthAt(f, L, upper);
       let dz = nanMedian(centredWindow(this.buf, i, this.o.depthSmooth,
-        (g) => depthAt(g, L, upper)));
+                                       (g) => depthAt(g, L, upper)));
       if (!Number.isFinite(centre)) dz = NaN;   // NaN in -> NaN out
 
       // the model decides only which way; majority sign over a centred window
       const signs = centredWindow(this.buf, i, this.o.signWindow,
-        (g) => g[signKey]);
+                                  (g) => g[signKey]);
       const acc = signs.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
       const s = Math.sign(acc) || 1;
       return { v: [x, y, dz * s], ratio };
