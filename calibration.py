@@ -39,7 +39,6 @@ def identity_params():
         "knots_corrected": [0.0, 180.0],
         "offset": None,
         "view_class": None,
-        "yaw_at_capture": None,
         "date": None,
         "yaw_at_capture": None,
     }

@@ -4,13 +4,32 @@ from scipy.ndimage import median_filter
 
 
 def butterworth_filter(data, fs, cutoff=6.0, order=2, causal=False):
-    """fs = real frame rate (about 29.4-29.5). causal=True is for live use."""
-    b, a = butter(order, cutoff / (fs / 2), btype="low")
-    if causal:
-        zi = lfilter_zi(b, a) * data[0]          # start at the first value, not at 0
-        return lfilter(b, a, data, zi=zi)[0]
-    return filtfilt(b, a, data)
+    """fs = real frame rate. causal=True is for live use.
+    NaN-safe, and safe at low frame rates and on short clips."""
+    arr = np.asarray(data, float)
+    if arr.size == 0:
+        return arr.copy()
+    nan_mask = np.isnan(arr)
+    if nan_mask.all():
+        return arr.copy()
+    filled = fill_gaps(arr.copy())
 
+    nyq = fs / 2.0
+    wn = min(cutoff / nyq, 0.99)          # ← 1. අඩු fps එකට clamp
+    b, a = butter(order, wn, btype="low")
+
+    padlen = 3 * max(len(a), len(b))
+    if causal:
+        zi = lfilter_zi(b, a) * filled[0]
+        res = lfilter(b, a, filled, zi=zi)[0]
+    elif len(filled) <= padlen:
+        res = filled                       # ← 2. කෙටි clip එකට filtfilt skip
+    else:
+        res = filtfilt(b, a, filled)
+
+    res = np.asarray(res, float)
+    res[nan_mask] = np.nan
+    return res
 
 def savitzky_golay_filter(data, window_length=9, polyorder=3):
     """window_length must be odd and larger than polyorder."""
