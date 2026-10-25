@@ -10,7 +10,7 @@ BODY_LINKS = [(11, 12), (11, 13), (13, 15), (12, 14), (14, 16),
 
 JOINTS = {   # exercise -> side -> (a, b, c); the angle is measured at b
     "elbow": {"left": (11, 13, 15), "right": (12, 14, 16)},
-    "knee":  {"left": (23, 25, 27), "right": (24, 26, 28)},
+    "shoulder":  {"left": (23, 11, 13), "right": (24, 12, 14)},
 }
 
 

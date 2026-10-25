@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-25T00:45:13.767546",
+  "exercise": "elbow",
+  "total_reps": 4,
+  "reps": [
+    {
+      "rep_number": 1,
+      "max_angle": 153.5,
+      "min_angle": 47.1,
+      "rom": 106.4,
+      "duration_s": 2.67,
+      "timestamp": 7.4,
+      "quality_score": null,
+      "faults": []
+    },
+    {
+      "rep_number": 2,
+      "max_angle": 166.9,
+      "min_angle": 41.3,
+      "rom": 125.6,
+      "duration_s": 3.34,
+      "timestamp": 11.54,
+      "quality_score": null,
+      "faults": []
+    },
+    {
+      "rep_number": 3,
+      "max_angle": 163.5,
+      "min_angle": 41.3,
+      "rom": 122.2,
+      "duration_s": 4.55,
+      "timestamp": 17.94,
+      "quality_score": null,
+      "faults": []
+    },
+    {
+      "rep_number": 4,
+      "max_angle": 160.5,
+      "min_angle": 47.5,
+      "rom": 112.9,
+      "duration_s": 3.74,
+      "timestamp": 23.28,
+      "quality_score": null,
+      "faults": []
+    }
+  ],
+  "summary": {
+    "total_reps": 4,
+    "mean_rom": 116.8,
+    "min_rom": 106.4,
+    "max_rom": 125.6,
+    "mean_dur": 3.57
+  }
+}
