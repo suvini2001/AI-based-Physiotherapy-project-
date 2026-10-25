@@ -44,6 +44,33 @@ class ElbowFSM:
         self._rep_angles     = []
         self._rep_start_time = None
         self.reps            = []        # full history, for session_log.json
+        self._min_rep_s      = 0.5
+
+    def calibrate_from_signal(self, angle_signal, fps=30.0):
+        """
+        Tune thresholds from an initial calibration window.
+
+        Signals with fewer than 30 finite samples or less than 30 degrees of
+        robust range keep the fixed defaults.
+        """
+        finite = np.asarray(angle_signal, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if len(finite) < 30:
+            return
+
+        sig_min = float(np.percentile(finite, 5))
+        sig_max = float(np.percentile(finite, 95))
+        sig_range = sig_max - sig_min
+        if sig_range < 30:
+            return
+
+        self.FLEX_THRESH = sig_min + sig_range * 0.30
+        self.EXTEND_THRESH = sig_max - sig_range * 0.25
+        self.MIN_ROM = sig_range * 0.20
+        self._min_rep_s = 0.5
+        print(f"FSM calibrated: FLEX={self.FLEX_THRESH:.0f}°  "
+              f"EXTEND={self.EXTEND_THRESH:.0f}°  "
+              f"range={sig_range:.0f}°")
 
     def update(self, angle_deg, timestamp_s):
         """
@@ -96,20 +123,23 @@ class ElbowFSM:
         rom = float(np.nanmax(angles) - np.nanmin(angles))
 
         # ignore spurious micro-reps (noise or signal artefacts)
-        if rom < self.MIN_ROM:
+        duration = (timestamp_s - self._rep_start_time
+            if self._rep_start_time else 0.0)
+        min_rep_s = getattr(self, '_min_rep_s', 0.5)
+
+        if rom < self.MIN_ROM or duration < min_rep_s:
             self._rep_angles     = []
             self._rep_start_time = None
             return
         rep = {
-            "rep_number": self.rep_count + 1,
-            "max_angle":  round(float(np.nanmax(angles)), 1),
-            "min_angle":  round(float(np.nanmin(angles)), 1),
-            "rom":        round(float(np.nanmax(angles) - np.nanmin(angles)), 1),
-            "duration_s": round(timestamp_s - self._rep_start_time, 2)
-                          if self._rep_start_time else 0.0,
-            "timestamp":  round(timestamp_s, 2),
-            "quality_score": None,   # Person B fills this in
-            "faults":        [],     # Person B fills this in
+            "rep_number":    self.rep_count + 1,
+            "max_angle":     round(float(np.nanmax(angles)), 1),
+            "min_angle":     round(float(np.nanmin(angles)), 1),
+            "rom":           round(rom, 1),
+            "duration_s":    round(duration, 2),   # use already-computed duration
+            "timestamp":     round(timestamp_s, 2),
+            "quality_score": None,
+            "faults":        [],
         }
         self.rep_count += 1
         self.reps.append(rep)
@@ -170,11 +200,30 @@ class ShoulderFSM:
         self.prev_angle   = None
         self.rep_count    = 0
         self.rep_callback = rep_callback
+        self._min_rep_s = 0.5
 
         self._rep_angles     = []
         self._rep_start_time = None
         self.reps            = []
 
+    def calibrate_from_signal(self, angle_signal, fps=30.0):
+        """Auto-tune thresholds from observed signal range."""
+        finite = np.asarray(angle_signal, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if len(finite) < 30:
+            return
+        sig_min   = float(np.percentile(finite, 5))
+        sig_max   = float(np.percentile(finite, 95))
+        sig_range = sig_max - sig_min
+        if sig_range < 30:
+            return
+        self.RAISE_THRESH = sig_min + sig_range * 0.30
+        self.REST_THRESH  = sig_min + sig_range * 0.05
+        self.MIN_ROM      = sig_range * 0.20
+        self._min_rep_s   = 0.5
+        print(f"ShoulderFSM calibrated: RAISE={self.RAISE_THRESH:.0f}°  "
+              f"REST={self.REST_THRESH:.0f}°  range={sig_range:.0f}°")
+        
     def update(self, angle_deg, timestamp_s):
         if angle_deg is None or not np.isfinite(angle_deg):
             return self.state, False
@@ -216,23 +265,24 @@ class ShoulderFSM:
     def _finish_rep(self, timestamp_s):
         if not self._rep_angles:
             return
-        angles = np.array(self._rep_angles)
-        rom = float(np.nanmax(angles) - np.nanmin(angles))
+        angles   = np.array(self._rep_angles)
+        rom      = float(np.nanmax(angles) - np.nanmin(angles))
+        duration = (timestamp_s - self._rep_start_time
+                    if self._rep_start_time else 0.0)
+        min_rep_s = getattr(self, '_min_rep_s', 0.5)
 
-        # ignore spurious micro-reps (noise or signal artefacts)
-        if rom < self.MIN_ROM:
+        if rom < self.MIN_ROM or duration < min_rep_s:
             self._rep_angles     = []
             self._rep_start_time = None
             return
-        
+
         rep = {
-            "rep_number": self.rep_count + 1,
-            "max_angle":  round(float(np.nanmax(angles)), 1),
-            "min_angle":  round(float(np.nanmin(angles)), 1),
-            "rom":        round(float(np.nanmax(angles) - np.nanmin(angles)), 1),
-            "duration_s": round(timestamp_s - self._rep_start_time, 2)
-                          if self._rep_start_time else 0.0,
-            "timestamp":  round(timestamp_s, 2),
+            "rep_number":    self.rep_count + 1,
+            "max_angle":     round(float(np.nanmax(angles)), 1),
+            "min_angle":     round(float(np.nanmin(angles)), 1),
+            "rom":           round(rom, 1),
+            "duration_s":    round(duration, 2),
+            "timestamp":     round(timestamp_s, 2),
             "quality_score": None,
             "faults":        [],
         }

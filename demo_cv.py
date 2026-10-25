@@ -199,8 +199,8 @@ def main():
     # ── FSM setup ────────────────────────────────────────────────────────
     t_start = time.perf_counter()
 
+    # ── FSM setup ─────────────────────────────────────────────────────────
     def on_rep_complete(rep):
-        """Called by FSM each time a rep finishes. Print to console for now."""
         print(f"  Rep {rep['rep_number']:2d} | "
             f"ROM {rep['rom']:.0f}°  "
             f"(max {rep['max_angle']:.0f}° → min {rep['min_angle']:.0f}°)  "
@@ -210,9 +210,10 @@ def main():
         fsm = ShoulderFSM(rep_callback=on_rep_complete)
     else:
         fsm = ElbowFSM(rep_callback=on_rep_complete)
-    counter = FpsCounter()
-    stage = dict(read=0.0, pose=0.0, clean=0.0, draw=0.0)
-    n, t_start = 0, time.perf_counter()
+
+    CALIBRATION_S      = 5.0
+    calibration_angles = []
+    calibration_done   = False
 
     while True:
         t0 = time.perf_counter()
@@ -223,9 +224,31 @@ def main():
         norm, world = extractor.process_with_world(frame)   # BEFORE any flip
         t2 = time.perf_counter()
         clean, ang = pipe.step(norm, world)
-        # ── FSM update ───────────────────────────────────────────────────────
+        # ── FSM update ────────────────────────────────────────────────────────
         timestamp = time.perf_counter() - t_start
-        state, rep_done = fsm.update(ang, timestamp)
+
+        if not calibration_done:
+            if ang is not None:
+                calibration_angles.append(ang)
+            if timestamp >= CALIBRATION_S:
+                fsm.calibrate_from_signal(calibration_angles, fps=src.fps())
+                calibration_done = True
+            # show countdown on screen
+            if not args.no_overlay:
+                remaining = max(0, CALIBRATION_S - timestamp)
+                put_big_text(frame,
+                            f"Calibrating {remaining:.0f}s — move arm through full range",
+                            (20, 140), 0.6, (0, 200, 255))
+        else:
+            state, rep_done = fsm.update(ang, timestamp)
+            if not args.no_overlay:
+                put_big_text(frame, f"Reps: {fsm.rep_count}",
+                            (20, 140), 0.9, (0, 255, 0))
+                put_big_text(frame, f"State: {state}",
+                            (20, 170), 0.7, (255, 200, 0))
+                if ang is not None:
+                    put_big_text(frame, f"Angle: {ang:.0f}°",
+                                (20, 200), 0.8, (255, 255, 255))
 
         # ── overlay: show state and rep count ────────────────────────────────
         if not args.no_overlay:
