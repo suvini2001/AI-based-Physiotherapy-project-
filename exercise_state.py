@@ -110,6 +110,11 @@ class ElbowFSM:
                 self.state    = "EXTENDED"
                 rep_completed = True
                 self._finish_rep(timestamp_s)
+            elif direction < -self.MIN_DELTA:
+                self._finish_rep(timestamp_s)          # ← ADD THIS LINE
+                self.state           = "FLEXING"
+                self._rep_angles     = [angle_deg]
+                self._rep_start_time = timestamp_s
 
         self.prev_angle = angle_deg
         return self.state, rep_completed
@@ -230,7 +235,8 @@ class ShoulderFSM:
 
         direction = (angle_deg - self.prev_angle
                      if self.prev_angle is not None else 0.0)
-        self._rep_angles.append(angle_deg)
+        if self.state != "RESTING":
+            self._rep_angles.append(angle_deg)
         rep_completed = False
 
         if self.state == "RESTING":

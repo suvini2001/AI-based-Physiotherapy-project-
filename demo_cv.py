@@ -85,94 +85,6 @@ class AnglePipeline:
             ang = float(apply_calibration(ang, self.calibration))
         return clean, ang
 
-
-"""demo_cv.py - webcam or clip -> landmarks -> clean -> angle -> overlay.
-  python demo_cv.py --exercise elbow --side right          (live webcam, variant A = old 2D angle)
-  python demo_cv.py --variant B                             (3D angle from world landmarks)
-  python demo_cv.py --calibration data/user_calibration.json
-  python demo_cv.py --source data/elbow_A_laptop.mp4        (replay a clip)
-  python demo_cv.py --no-overlay                            (FPS without drawing)
-Commit 1 (Person A): the loop, variants A and B, calibration. Commit 2 (Person B): yaw message, variant C, gate."""
-import argparse, sys, time
-from collections import deque
-import cv2
-import numpy as np
-
-sys.path.append("capture")
-sys.path.append("pose")
-sys.path.append("vision")
-from camera import FrameSource, FpsCounter
-from landmarks import LandmarkExtractor
-from visibility import mask_low_visibility, load_config
-from filters import OneEuroFilter
-from angles import angle
-from angles_world import mask_world_like
-from calibration import load_params, apply_calibration
-from gap_fill import fill_gaps
-from vision.overlay import JOINTS, draw_angle, draw_skeleton, put_big_text
-
-
-WINDOW = 15            # recent frames kept for gap filling (about 0.5 s)
-SPIKE_WINDOW = 5       # median of the last 5 angles removes one-frame spikes
-VARIANTS = ["A", "B", "C"]  # Person B adds "C" in the second commit
-
-
-class AnglePipeline:
-    """One frame in, one cleaned angle out. Separate from the window so it can be tested without a camera."""
-
-    def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None):
-        self.joint, self.variant, self.size = joint, variant, size
-        self.thr, self.max_gap, self.calibration = thr, max_gap, calibration
-        self.win_norm, self.win_world = deque(maxlen=WINDOW), deque(maxlen=WINDOW)
-        self.recent = deque(maxlen=SPIKE_WINDOW)
-        self.smoother = OneEuroFilter(fs=fps)
-
-    def raw_angle(self, clean_norm, clean_world):
-        pts_n = [clean_norm[i] for i in self.joint]
-        if any(np.isnan(p[:3]).any() for p in pts_n):
-            return None
-        if self.variant == "A":                               # old way: 2D pixels
-            px = [np.array([p[0] * self.size[0], p[1] * self.size[1]]) for p in pts_n]
-            return float(angle(*px))
-        if self.variant == "B":                               # 3D world landmarks, metres
-            pts_w = [clean_world[i, :3] for i in self.joint]
-            if any(np.isnan(p).any() for p in pts_w):
-                return None
-            return float(angle(*pts_w))
-        # --- Person B plugs variant C (yaw-corrected) here, in the second commit ---
-        if self.variant == "C":
-            from angles_3d import elbow_angle_yaw_corrected
-            return float(elbow_angle_yaw_corrected(world[None], self.side)[0]) \
-                if not np.isnan(clean_world).any() else None
-        raise ValueError(f"unknown variant {self.variant}")
-    
-    def step(self, norm, world):
-        """norm, world: (33, 4) for one frame. Returns (clean_norm, angle_or_None)."""
-        masked = mask_low_visibility(norm[None], self.thr)[0]
-        self.win_norm.append(masked)
-        self.win_world.append(mask_world_like(world[None], masked[None])[0])
-        clean = fill_gaps(np.stack(self.win_norm), self.max_gap)[-1]
-        clean_w = fill_gaps(np.stack(self.win_world), self.max_gap)[-1]
-        raw = self.raw_angle(clean, clean_w)
-        # --- Person B plugs the bone-length / yaw gate here: invalid frame -> raw = None ---
-        # bone-length / yaw gate (variant E)
-        if raw is not None and self.variant in ("C", "E"):
-            from angles_3d import bone_length_gate
-            world_frame = np.stack(self.win_world)[-1]
-            gate_ok = bone_length_gate(world_frame[None], self.side)[0]
-            if not gate_ok:
-                raw = None
-
-        if raw is None:
-            return clean, None
-        self.recent.append(raw)
-        ang = self.smoother(float(np.median(self.recent)))
-        ang = min(max(ang, 0.0), 180.0)
-        if self.calibration is not None:
-            ang = float(apply_calibration(ang, self.calibration))
-        return clean, ang
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="0")
@@ -196,8 +108,6 @@ def main():
     extractor = LandmarkExtractor()
     joint = JOINTS[args.exercise][args.side]
     pipe = AnglePipeline(joint, args.variant, size, src.fps(), thr, max_gap, calibration)
-    # ── FSM setup ────────────────────────────────────────────────────────
-    t_start = time.perf_counter()
 
     # ── FSM setup ─────────────────────────────────────────────────────────
     def on_rep_complete(rep):
@@ -210,10 +120,17 @@ def main():
         fsm = ShoulderFSM(rep_callback=on_rep_complete)
     else:
         fsm = ElbowFSM(rep_callback=on_rep_complete)
+    state = fsm.state   # safe default before calibration completes
 
     CALIBRATION_S      = 5.0
     calibration_angles = []
     calibration_done   = False
+    # add these RIGHT BEFORE the while True loop
+    counter = FpsCounter()
+    stage   = dict(read=0.0, pose=0.0, clean=0.0, draw=0.0)
+    n       = 0
+    t_start = time.perf_counter()  
+    is_file = isinstance(source, str)   
 
     while True:
         t0 = time.perf_counter()
@@ -226,7 +143,8 @@ def main():
         clean, ang = pipe.step(norm, world)
         # ── FSM update ────────────────────────────────────────────────────────
         timestamp = time.perf_counter() - t_start
-
+        timestamp = (n / src.fps()) if is_file else (time.perf_counter() - t_start)
+        
         if not calibration_done:
             if ang is not None:
                 calibration_angles.append(ang)
@@ -248,19 +166,9 @@ def main():
                             (20, 170), 0.7, (255, 200, 0))
                 if ang is not None:
                     put_big_text(frame, f"Angle: {ang:.0f}°",
-                                (20, 200), 0.8, (255, 255, 255))
+                                (20, 200), 0.8, (255, 255, 255))    
 
-        # ── overlay: show state and rep count ────────────────────────────────
-        if not args.no_overlay:
-            put_big_text(frame, f"Reps: {fsm.rep_count}", (20, 140), 0.9,
-                        (0, 255, 0))
-            put_big_text(frame, f"State: {state}", (20, 170), 0.7,
-                        (255, 200, 0))
-            if ang is not None:
-                put_big_text(frame, f"Angle: {ang:.0f}°", (20, 200), 0.8,
-                            (255, 255, 255))
-        t3 = time.perf_counter()
-
+        t3  = time.perf_counter()   # ← ADD THIS
         fps = counter.tick()
         if not args.no_overlay:
             if args.mirror:
@@ -293,7 +201,8 @@ def main():
     fsm.flush(time.perf_counter() - t_start)
 
     if fsm.rep_count > 0:
-        save_session(fsm, args.exercise)
+        exercise_name = "elbow_flexion" if args.exercise == "elbow" else "shoulder_abduction"
+        save_session(fsm, exercise_name)
         print("\nSession summary:", fsm.summary())
 
     extractor.close()
