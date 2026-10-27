@@ -145,6 +145,7 @@ class ElbowFSM:
             "timestamp":     round(timestamp_s, 2),
             "quality_score": None,
             "faults":        [],
+            "_angle_series": [round(float(a), 1) for a in self._rep_angles],
         }
         self.rep_count += 1
         self.reps.append(rep)
@@ -291,6 +292,7 @@ class ShoulderFSM:
             "timestamp":     round(timestamp_s, 2),
             "quality_score": None,
             "faults":        [],
+            "_angle_series": [round(float(a), 1) for a in self._rep_angles],
         }
         self.rep_count += 1
         self.reps.append(rep)
@@ -330,11 +332,17 @@ class ShoulderFSM:
 def save_session(fsm, exercise_name, path="session_log.json"):
     """Write the full session to JSON. Call at end of demo_cv.py."""
     import datetime
+
+    def clean_rep(r):
+        # keep _angle_series for DTW calibration
+        # strip _landmarks (large numpy array, not JSON serialisable)
+        return {k: v for k, v in r.items() if k != '_landmarks'}
+    
     session = {
         "date":       datetime.datetime.now().isoformat(),
         "exercise":   exercise_name,
         "total_reps": fsm.rep_count,
-        "reps":       fsm.reps,
+        "reps":       [clean_rep(r) for r in fsm.reps],
         "summary":    fsm.summary(),
     }
     with open(path, "w") as f:

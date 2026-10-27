@@ -9,6 +9,9 @@ import argparse, sys, time
 from collections import deque
 import cv2
 import numpy as np
+import assessment.scorer as scorer
+import audio_feedback
+from vision.overlay import draw_feedback, draw_session_summary
 
 sys.path.append("capture")
 sys.path.append("pose")
@@ -87,130 +90,227 @@ class AnglePipeline:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default="0")
-    ap.add_argument("--exercise", choices=JOINTS, default="elbow")
-    ap.add_argument("--side", choices=["left", "right"], default="right")
-    ap.add_argument("--variant", choices=VARIANTS, default="A")
-    ap.add_argument("--calibration", default=None, help="path to data/user_calibration.json")
-    ap.add_argument("--width", type=int, default=640)
-    ap.add_argument("--height", type=int, default=480)
-    ap.add_argument("--mirror", action="store_true", help="display only")
-    ap.add_argument("--no-overlay", action="store_true", help="for the FPS comparison")
+    ap.add_argument("--source",      default="0")
+    ap.add_argument("--exercise",    choices=list(JOINTS.keys()), default="elbow")
+    ap.add_argument("--side",        choices=["left", "right"],   default="right")
+    ap.add_argument("--variant",     choices=VARIANTS,            default="A")
+    ap.add_argument("--calibration", default=None)
+    ap.add_argument("--width",       type=int, default=640)
+    ap.add_argument("--height",      type=int, default=480)
+    ap.add_argument("--mirror",      action="store_true")
+    ap.add_argument("--no-overlay",  action="store_true")
     args = ap.parse_args()
 
-    cfg = load_config()
+    cfg          = load_config()
     thr, max_gap = cfg["visibility_threshold"], cfg["max_gap_frames"]
-    calibration = load_params(args.calibration) if args.calibration else None
+    calibration  = load_params(args.calibration) if args.calibration else None
+    source       = int(args.source) if args.source.isdigit() else args.source
+    src          = FrameSource(source, args.width, args.height)
+    size         = src.size()
+    extractor    = LandmarkExtractor()
+    joint        = JOINTS[args.exercise][args.side]
+    pipe         = AnglePipeline(joint, args.variant, size,
+                                 src.fps(), thr, max_gap, calibration)
 
-    source = int(args.source) if args.source.isdigit() else args.source
-    src = FrameSource(source, args.width, args.height)
-    size = src.size()
-    extractor = LandmarkExtractor()
-    joint = JOINTS[args.exercise][args.side]
-    pipe = AnglePipeline(joint, args.variant, size, src.fps(), thr, max_gap, calibration)
+    # ── scorer ──────────────────────────────────────────────────────
+    scorer.load('template.json')
+    frame_height = args.height
+    flex_thresh  = 55.0
 
-    # ── FSM setup ─────────────────────────────────────────────────────────
+    # ── feedback display state ──────────────────────────────────────
+    _feedback_rep   = None
+    _feedback_timer = 0.0
+
+    # ── rep callback ────────────────────────────────────────────────
     def on_rep_complete(rep):
+        nonlocal _feedback_rep, _feedback_timer, flex_thresh
+        flex_thresh = fsm.FLEX_THRESH
+        scorer.score_rep(rep,
+                         frame_height=frame_height,
+                         calibrated_flex_thresh=flex_thresh)
         print(f"  Rep {rep['rep_number']:2d} | "
-            f"ROM {rep['rom']:.0f}°  "
-            f"(max {rep['max_angle']:.0f}° → min {rep['min_angle']:.0f}°)  "
-            f"dur {rep['duration_s']:.1f}s")
+              f"ROM {rep['rom']:.0f}°  "
+              f"(max {rep['max_angle']:.0f}° → min {rep['min_angle']:.0f}°)  "
+              f"dur {rep['duration_s']:.1f}s  "
+              f"Q={rep['quality_score']:.0f}%  "
+              f"faults={rep['faults']}")
+        audio_feedback.speak(f"Rep {rep['rep_number']}")
+        if rep['quality_score'] < 70 and rep['faults']:
+            audio_feedback.speak(
+                rep['faults'][0].split('—')[-1].strip(),
+                priority=True)
+        elif rep['quality_score'] >= 85:
+            audio_feedback.speak("Good", priority=False)
+        _feedback_rep   = rep
+        _feedback_timer = time.perf_counter() + 2.0
 
+    # ── FSM ─────────────────────────────────────────────────────────
     if args.exercise == "shoulder":
         fsm = ShoulderFSM(rep_callback=on_rep_complete)
     else:
         fsm = ElbowFSM(rep_callback=on_rep_complete)
-    state = fsm.state   # safe default before calibration completes
 
-    CALIBRATION_S      = 5.0
+    # ── session timing ───────────────────────────────────────────────
+    # Phase 1: READY    0  → READY_S        stand still, get in position
+    # Phase 2: CALIB    READY_S → READY_S+CALIBRATION_S   move arm
+    # Phase 3: COUNT    READY_S+CALIBRATION_S onwards      reps counted
+    READY_S       = 3.0
+    CALIBRATION_S = 5.0
+    CALIB_END_S   = READY_S + CALIBRATION_S   # = 8.0
+
     calibration_angles = []
-    calibration_done   = False
-    # add these RIGHT BEFORE the while True loop
+    phase              = "READY"   # READY → CALIB → COUNT
+    _announced_ready   = False
+    _announced_calib   = False
+    _announced_count   = False
+
     counter = FpsCounter()
     stage   = dict(read=0.0, pose=0.0, clean=0.0, draw=0.0)
     n       = 0
-    t_start = time.perf_counter()  
-    is_file = isinstance(source, str)   
+    t_start = time.perf_counter()
+    is_file = isinstance(source, str)
+    state   = fsm.state
 
     while True:
-        t0 = time.perf_counter()
+        t0        = time.perf_counter()
         ok, frame = src.read_frame()
         if not ok:
             break
-        t1 = time.perf_counter()
-        norm, world = extractor.process_with_world(frame)   # BEFORE any flip
-        t2 = time.perf_counter()
+
+        t1          = time.perf_counter()
+        norm, world = extractor.process_with_world(frame)
+
+        t2         = time.perf_counter()
         clean, ang = pipe.step(norm, world)
-        # ── FSM update ────────────────────────────────────────────────────────
-        timestamp = time.perf_counter() - t_start
+
         timestamp = (n / src.fps()) if is_file else (time.perf_counter() - t_start)
-        
-        if not calibration_done:
+
+        # ── phase logic ─────────────────────────────────────────────
+        if phase == "READY":
+            # announce once
+            if not _announced_ready and timestamp > 0.1:
+                audio_feedback.speak(
+                    "Get ready. Stand still and face the camera.",
+                    priority=True)
+                _announced_ready = True
+
+            if timestamp >= READY_S:
+                phase = "CALIB"
+
+            if not args.no_overlay:
+                remaining = max(0.0, READY_S - timestamp)
+                put_big_text(frame,
+                    f"Get ready  {remaining:.0f}s — stand still",
+                    (20, 140), 0.7, (0, 200, 255))
+
+        elif phase == "CALIB":
+            # announce once
+            if not _announced_calib:
+                time.sleep(0.3)
+                audio_feedback.speak(
+                    "Move your arm slowly through its full range.",
+                    priority=True)
+                _announced_calib = True
+
             if ang is not None:
                 calibration_angles.append(ang)
-            if timestamp >= CALIBRATION_S:
+
+            cal_elapsed = timestamp - READY_S
+            if cal_elapsed >= CALIBRATION_S:
                 fsm.calibrate_from_signal(calibration_angles, fps=src.fps())
-                calibration_done = True
-            # show countdown on screen
+                flex_thresh = fsm.FLEX_THRESH
+                phase       = "COUNT"
+                print("Thresholds updated from calibration")
+
             if not args.no_overlay:
-                remaining = max(0, CALIBRATION_S - timestamp)
+                remaining = max(0.0, CALIBRATION_S - cal_elapsed)
                 put_big_text(frame,
-                            f"Calibrating {remaining:.0f}s — move arm through full range",
-                            (20, 140), 0.6, (0, 200, 255))
-        else:
-            state, rep_done = fsm.update(ang, timestamp)
+                    f"Calibrating  {remaining:.0f}s — move full range",
+                    (20, 140), 0.6, (0, 200, 255))
+
+        elif phase == "COUNT":
+            # announce once
+            if not _announced_count:
+                time.sleep(0.3)
+                audio_feedback.speak(
+                    "Good. Begin your exercise now.",
+                    priority=True)
+                _announced_count = True
+
+            # FSM only runs here — not during READY or CALIB
+            state, _ = fsm.update(ang, timestamp)
+
             if not args.no_overlay:
                 put_big_text(frame, f"Reps: {fsm.rep_count}",
-                            (20, 140), 0.9, (0, 255, 0))
+                             (20, 140), 0.9, (0, 255, 0))
                 put_big_text(frame, f"State: {state}",
-                            (20, 170), 0.7, (255, 200, 0))
+                             (20, 170), 0.7, (255, 200, 0))
                 if ang is not None:
                     put_big_text(frame, f"Angle: {ang:.0f}°",
-                                (20, 200), 0.8, (255, 255, 255))    
+                                 (20, 200), 0.8, (255, 255, 255))
 
-        t3  = time.perf_counter()   # ← ADD THIS
+        t3  = time.perf_counter()
         fps = counter.tick()
+
         if not args.no_overlay:
             if args.mirror:
-                frame = cv2.flip(frame, 1)               # flip only for display
+                frame = cv2.flip(frame, 1)
             draw_skeleton(frame, clean, mirror=args.mirror)
             draw_angle(frame, clean, joint, ang, mirror=args.mirror)
-            label = f"variant {args.variant}" + (" + calibrated" if calibration else "")
+
+            if _feedback_rep and time.perf_counter() < _feedback_timer:
+                draw_feedback(frame,
+                              _feedback_rep.get('faults', []),
+                              _feedback_rep.get('quality_score', 50),
+                              landmarks=clean,
+                              h=frame.shape[0],
+                              w=frame.shape[1])
+
+            label = (f"variant {args.variant}" +
+                     (" + calibrated" if calibration else ""))
             put_big_text(frame, label, (20, 100), 0.8, (255, 255, 255))
-            # yaw warning (B7)
-            if args.variant in ("B", "C"):
-                try:
-                    from angles_3d import body_yaw
-                    from capture.view_check import draw_yaw_message, draw_yaw_bar
-                    yaw = body_yaw(world)
-                    draw_yaw_message(frame, yaw)
-                    draw_yaw_bar(frame, yaw)
-                except ImportError:
-                    pass
+
         put_big_text(frame, f"FPS {fps:.0f}", (20, 60), 1.4, (255, 255, 0))
         t4 = time.perf_counter()
 
         cv2.imshow("demo_cv (press q to quit)", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
-        for k, v in zip(stage, (t1 - t0, t2 - t1, t3 - t2, t4 - t3)):
+
+        for k, v in zip(stage, (t1-t0, t2-t1, t3-t2, t4-t3)):
             stage[k] += v
         n += 1
 
-    # flush any in-progress rep when Q is pressed
-    fsm.flush(time.perf_counter() - t_start)
+    # ── session end ──────────────────────────────────────────────────
+    session_duration = time.perf_counter() - t_start
+    fsm.flush(session_duration)
 
     if fsm.rep_count > 0:
-        exercise_name = "elbow_flexion" if args.exercise == "elbow" else "shoulder_abduction"
-        save_session(fsm, exercise_name)
+        exercise_name = ("elbow_flexion" if args.exercise == "elbow"
+                         else "shoulder_abduction")
+        summary = scorer.session_summary(fsm.reps)
         print("\nSession summary:", fsm.summary())
+        print("Quality summary:", summary)
+
+        ok2, last_frame = src.read_frame()
+        if not ok2:
+            last_frame = frame
+        draw_session_summary(last_frame, summary)
+        cv2.imshow("demo_cv (press q to quit)", last_frame)
+        cv2.waitKey(3000)
+
+        save_session(fsm, exercise_name)
+    else:
+        print("\nNo reps recorded.")
 
     extractor.close()
     src.release()
     cv2.destroyAllWindows()
     if n:
-        print(f"{n} frames, mean FPS {n / (time.perf_counter() - t_start):.1f}")
-        print({k: f"{1000 * v / n:.1f} ms/frame" for k, v in stage.items()})
+        total = time.perf_counter() - t_start
+        print(f"{n} frames, mean FPS {n/total:.1f}")
+        print({k: f"{1000*v/n:.1f} ms/frame"
+               for k, v in stage.items()})
 
 
 if __name__ == "__main__":
