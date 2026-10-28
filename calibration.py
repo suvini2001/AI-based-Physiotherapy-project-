@@ -249,3 +249,20 @@ def load_params(path):
         params = json.load(f)
     check_params({**params, "offset": None})
     return params
+
+
+def calibration_warnings(params, variant):
+    """Plain-language problems with the calibration about to be used."""
+    if params is None:
+        return ["no --calibration given: angles are uncorrected (variant A median MAE 16 deg on REHAB24-6)."]
+    out = []
+    if params.get("curve_version") == "identity":
+        out.append("calibration curve is the identity (no correction). "
+                   "Run scripts/fit_calibration.py, then capture/calibrate_ui.py.")
+    fitted = params.get("variant")
+    if fitted and fitted != variant:
+        out.append(f"curve was fitted on variant {fitted} but --variant is {variant}.")
+    check = params.get("straight_check") or {}
+    if check.get("status") not in (None, "ok"):
+        out.append(f"straight-arm check: {check.get('message')}")
+    return out

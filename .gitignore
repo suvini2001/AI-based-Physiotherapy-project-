@@ -5,3 +5,9 @@ data/*.mp4
 dataset
 results
 
+# Participant & volunteer session recordings (privacy & research ethics)
+session_log.json
+data/healthy/
+data/abnormal/
+data/test_*/
+data/user_calibration.json

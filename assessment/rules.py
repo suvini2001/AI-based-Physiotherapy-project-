@@ -2,16 +2,16 @@
 """
 Rule-based compensation checks for each completed rep.
 Sources:
-  - Pavlikov et al. Sensors 2026 (five metrics, thresholds, normalisation)
+  - Metric ideas adapted from Pavlikov et al. Sensors 2026 (five metrics, normalisation)
   - Work plan (ROM tolerance, duration >= 1.0s)
 """
 import numpy as np
 
-# ── fixed clinical thresholds (Pavlikov 2026) ────────────────────
+# ── preliminary thresholds (metric ideas adapted from Pavlikov 2026; thresholds are our own preliminary values) ──
 SPEED_MIN_S    = 1.0    # seconds — too fast if below this
-ELEV_THRESHOLD = 0.03   # shoulder rises > 3% of frame height = fault
-LEAN_THRESHOLD = 10.0   # trunk leans > 10 degrees = fault
-ASYM_THRESHOLD = 0.04   # shoulder height difference > 4% of frame = fault
+ELEV_THRESHOLD = 0.03   # shoulder rises > 3% of frame height = fault (Pavlikov: 0.174 x shoulder width)
+LEAN_THRESHOLD = 10.0   # trunk leans > 10 degrees = fault (Pavlikov: 0.090 rad = 5.2 deg)
+ASYM_THRESHOLD = 0.04   # shoulder height difference > 4% of frame = fault (Pavlikov: arm-angle diff >= 13.2 deg)
 
 # ROM tolerance — how many degrees above calibrated FLEX_THRESH
 # before flagging incomplete flexion

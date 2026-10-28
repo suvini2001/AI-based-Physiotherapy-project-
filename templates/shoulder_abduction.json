@@ -1,0 +1,13 @@
+{
+  "exercise": "shoulder_abduction",
+  "recorded_by": "synthetic_for_testing",
+  "n_reps": 0,
+  "mean_trajectory": [],
+  "std_trajectory": [],
+  "mu_dtw": 0.0,
+  "sigma_dtw": 0.0,
+  "n_calibration_reps": 0,
+  "calibrated": false,
+  "n_people": 0,
+  "note": "Synthetic shoulder abduction template. Replace with scripts/build_template.py on real healthy reps before reporting any DTW result."
+}

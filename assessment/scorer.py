@@ -19,9 +19,20 @@ from assessment import dtw   as _dtw
 _template = None
 
 
-def load(template_path='template.json'):
+def load(template_path='template.json', exercise=None):
     """Call once at startup before scoring any reps."""
     global _template
+    import os
+    if exercise and (template_path == 'template.json' or template_path is None):
+        ex_norm = "shoulder_abduction" if exercise in ("shoulder", "shoulder_abduction") else "elbow_flexion"
+        candidate = os.path.join("templates", f"{ex_norm}.json")
+        if os.path.exists(candidate):
+            template_path = candidate
+        elif template_path is None:
+            template_path = 'template.json'
+    elif template_path is None:
+        template_path = 'template.json'
+
     try:
         _template = _dtw.load_template(template_path)
         print(f"Template loaded: {_template.get('exercise','?')}  "
@@ -38,7 +49,8 @@ def load(template_path='template.json'):
         _template = None
 
 
-def score_rep(rep_dict, frame_height=480.0, rom_params=None, frame_width=640.0, calibrated_flex_thresh=None):
+def score_rep(rep_dict, frame_height=480.0, rom_params=None, frame_width=640.0,
+              calibrated_flex_thresh=None, exercise=None):
     """
     Fills rep_dict['quality_score'] and rep_dict['faults'] in place.
     Returns the updated rep_dict.
@@ -52,19 +64,34 @@ def score_rep(rep_dict, frame_height=480.0, rom_params=None, frame_width=640.0, 
         calibrated_flex_thresh=calibrated_flex_thresh
     )
 
+    # ── exercise match check ─────────────────────────────────────────
+    ex = exercise or rep_dict.get('exercise')
+    if not ex and isinstance(rom_params, dict):
+        ex = rom_params.get('exercise')
+
+    exercise_matches = True
+    if ex and _template and _template.get('exercise'):
+        ex_norm = "shoulder_abduction" if ex in ("shoulder", "shoulder_abduction") else "elbow_flexion" if ex in ("elbow", "elbow_flexion") else str(ex).lower()
+        t_norm = "shoulder_abduction" if _template['exercise'] in ("shoulder", "shoulder_abduction") else "elbow_flexion" if _template['exercise'] in ("elbow", "elbow_flexion") else str(_template['exercise']).lower()
+        exercise_matches = (ex_norm == t_norm)
+
     # ── DTW score ────────────────────────────────────────────────────
     dtw_score = 50.0  # neutral default
     rep_dict['dtw_used'] = False
-    if _dtw.is_calibrated(_template) and rep_dict.get('_angle_series'):
+    if _dtw.is_calibrated(_template) and rep_dict.get('_angle_series') and exercise_matches:
         dtw_score = _dtw.dtw_score(
             rep_dict['_angle_series'], _template)
         rep_dict['dtw_used'] = True
     rep_dict['dtw_score'] = dtw_score
 
     # ── combined quality score ────────────────────────────────────────
-    # 0.5 * DTW + 0.5 * rules_score — from work plan
+    # If DTW was used, 0.5 * DTW + 0.5 * rules_score.
+    # If DTW was not used, quality score is based purely on rules.
     rules_score = ((n_checked - len(faults)) / n_checked * 100.0) if n_checked > 0 else 100.0
-    quality     = round(0.5 * dtw_score + 0.5 * rules_score, 1)
+    if rep_dict['dtw_used']:
+        quality = round(0.5 * dtw_score + 0.5 * rules_score, 1)
+    else:
+        quality = round(rules_score, 1)
 
     rep_dict['quality_score'] = quality
     rep_dict['faults']        = faults

@@ -96,3 +96,32 @@ def test_scorer_uses_dtw_for_calibrated_template(tmp_path):
     scorer.score_rep(rep, 480, 55, 640)
     assert rep["dtw_used"] is True and rep["dtw_score"] >= 90
     scorer._template = None
+
+
+def test_scorer_dtw_not_used_gives_pure_rules_score(tmp_path):
+    p = tmp_path / "t.json"
+    json.dump({"exercise": "elbow_flexion", "recorded_by": "synthetic",
+               "calibrated": False, "mean_trajectory": curl(),
+               "mu_dtw": 10.0, "sigma_dtw": 5.0}, open(p, "w"))
+    scorer.load(str(p))
+    rep = {"min_angle": 40.0, "max_angle": 160.0, "rom": 120.0,
+           "duration_s": 2.5, "_angle_series": curl(150, 80), "_landmarks": None}
+    scorer.score_rep(rep, 480, 55, 640)
+    # 0 faults from 2 checks -> rules_score = 100.0 -> quality_score = 100.0
+    assert rep["dtw_used"] is False
+    assert rep["quality_score"] == 100.0
+    scorer._template = None
+
+
+def test_scorer_mismatched_exercise_skips_dtw(tmp_path):
+    p = tmp_path / "t.json"
+    json.dump(build_template(healthy_reps(), "elbow_flexion", "healthy_volunteers", 5),
+              open(p, "w"))
+    scorer.load(str(p))
+    # Rep is shoulder_abduction, but template is elbow_flexion
+    rep = {"exercise": "shoulder_abduction", "min_angle": 20.0, "max_angle": 90.0,
+           "rom": 70.0, "duration_s": 2.5, "_angle_series": curl(90, 20), "_landmarks": None}
+    scorer.score_rep(rep, 480, rom_params={"kind": "raise", "target": 75.0, "exercise": "shoulder_abduction"})
+    assert rep["dtw_used"] is False
+    assert rep["quality_score"] == 100.0
+    scorer._template = None

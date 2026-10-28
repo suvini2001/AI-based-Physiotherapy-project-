@@ -34,6 +34,7 @@ class ElbowFSM:
       - Aguilar-Ortega et al. Sensors 2023: ROM>=60 deg for valid flexion
     """
 
+    EXERCISE      = "elbow_flexion"
     EXTEND_THRESH = 145.0   # angle above this = arm extended
     FLEX_THRESH   =  55.0   # angle below this = arm fully flexed
     MIN_DELTA     =   2.0   # deg/frame minimum to confirm movement direction
@@ -155,6 +156,7 @@ class ElbowFSM:
             self._rep_start_time = None
             return
         rep = {
+            "exercise":      self.EXERCISE,
             "rep_number":    self.rep_count + 1,
             "max_angle":     round(float(np.nanmax(angles)), 1),
             "min_angle":     round(float(np.nanmin(angles)), 1),
@@ -189,7 +191,7 @@ class ElbowFSM:
         return self.reps[-1] if self.reps else None
 
     def rom_check_params(self):
-        return {"kind": "flex", "target": self.FLEX_THRESH}
+        return {"kind": "flex", "target": self.FLEX_THRESH, "exercise": self.EXERCISE}
 
     def summary(self):
         if not self.reps:
@@ -220,6 +222,7 @@ class ShoulderFSM:
       - Our ±10 deg tolerance is within the SDD range
     """
 
+    EXERCISE     = "shoulder_abduction"
     RAISE_THRESH = 75.0   # arm raised above this = abduction rep in progress
     REST_THRESH  = 30.0   # arm back below this   = rep complete
     MIN_DELTA    =  2.0
@@ -313,6 +316,7 @@ class ShoulderFSM:
             return
 
         rep = {
+            "exercise":      self.EXERCISE,
             "rep_number":    self.rep_count + 1,
             "max_angle":     round(float(np.nanmax(angles)), 1),
             "min_angle":     round(float(np.nanmin(angles)), 1),
@@ -346,7 +350,7 @@ class ShoulderFSM:
         return self.reps[-1] if self.reps else None
 
     def rom_check_params(self):
-        return {"kind": "raise", "target": self.RAISE_THRESH}
+        return {"kind": "raise", "target": self.RAISE_THRESH, "exercise": self.EXERCISE}
 
     def summary(self):
         if not self.reps:

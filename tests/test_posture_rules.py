@@ -247,12 +247,11 @@ def test_scorer_honest_score_with_missing_landmarks():
 
 # ── Test 18: Scorer honest score with all 5 checks passed ────────
 def test_scorer_honest_score_all_five_checks():
-    # No angle series -> DTW neutral = 50.0
+    # When DTW is not used, quality score equals pure rules_score (100.0)
     rep = make_test_rep(_angle_series=None)
     scorer.score_rep(rep)
-    # 5 checks evaluated, 0 faults -> rules_score = 100%
-    # Quality = 0.5 * 50 (DTW default) + 0.5 * 100 = 75.0
-    assert rep['quality_score'] == 75.0
+    # 5 checks evaluated, 0 faults -> rules_score = 100% -> quality = 100.0
+    assert rep['quality_score'] == 100.0
     assert rep['faults'] == []
 
 

@@ -19,7 +19,7 @@ from visibility import mask_low_visibility, load_config
 from filters import OneEuroFilter
 from angles import angle
 from angles_world import mask_world_like
-from calibration import load_params, apply_calibration
+from calibration import load_params, apply_calibration, calibration_warnings
 from vision.gap_fill import fill_gaps
 from vision.overlay import JOINTS, draw_angle, draw_skeleton, put_big_text
 from exercise_state import ElbowFSM, ShoulderFSM, save_session
@@ -108,6 +108,8 @@ def main():
     cfg          = load_config()
     thr, max_gap = cfg["visibility_threshold"], cfg["max_gap_frames"]
     calibration  = load_params(args.calibration) if args.calibration else None
+    for line in calibration_warnings(calibration, args.variant):
+        print("WARNING:", line)
     source       = int(args.source) if args.source.isdigit() else args.source
     src          = FrameSource(source, args.width, args.height)
     size         = src.size()
@@ -117,7 +119,12 @@ def main():
                                  src.fps(), thr, max_gap, calibration, side=args.side)
 
     # ── scorer ──────────────────────────────────────────────────────
-    scorer.load('template.json')
+    exercise_name = ("elbow_flexion" if args.exercise == "elbow"
+                     else "shoulder_abduction")
+    template_path = os.path.join("templates", f"{exercise_name}.json")
+    if not os.path.exists(template_path):
+        template_path = "template.json"
+    scorer.load(template_path, exercise=exercise_name)
     frame_width, frame_height = size      # src.size() → (width, height)
     rom_params = {"kind": "flex", "target": 55.0}
 
@@ -132,7 +139,8 @@ def main():
         scorer.score_rep(rep,
                          frame_height=frame_height,
                          rom_params=rom_params,
-                         frame_width=frame_width)
+                         frame_width=frame_width,
+                         exercise=exercise_name)
         print(f"  Rep {rep['rep_number']:2d} | "
               f"ROM {rep['rom']:.0f}°  "
               f"(max {rep['max_angle']:.0f}° → min {rep['min_angle']:.0f}°)  "
