@@ -1,9 +1,7 @@
 import sys
 import numpy as np
-sys.path.append("capture")
-sys.path.append("pose")
-from camera import FrameSource
-from landmarks import LandmarkExtractor
+from capture.camera import FrameSource
+from pose.landmarks import LandmarkExtractor
 
 
 def main(clip_path, out_path):

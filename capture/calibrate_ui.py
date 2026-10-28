@@ -140,8 +140,8 @@ def frame_angle(norm, world, mode, size, side="right", thr=0.70):
 
 def run(args):
     import cv2
-    from camera import FrameSource
-    from landmarks import LandmarkExtractor
+    from capture.camera import FrameSource
+    from pose.landmarks import LandmarkExtractor
     from vision.overlay import draw_skeleton
     try:
         from angles_3d import body_yaw             # Person B's function; the screen works without it

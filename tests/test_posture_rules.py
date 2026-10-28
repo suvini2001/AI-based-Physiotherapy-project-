@@ -236,9 +236,8 @@ def test_pixel_coordinates_supported():
 
 # ── Test 17: Scorer honest score with missing landmarks ──────────
 def test_scorer_honest_score_with_missing_landmarks():
-    # Only speed fault, no landmarks
-    rep = make_test_rep(duration_s=0.5, _landmarks=None)
-    # DTW neutral = 50.0
+    # Only speed fault, no landmarks, no angle series -> DTW neutral = 50.0
+    rep = make_test_rep(duration_s=0.5, _landmarks=None, _angle_series=None)
     scorer.score_rep(rep)
     # 2 checks evaluated, 1 fault -> rules_score = (1/2)*100 = 50%
     # Quality = 0.5 * 50 (DTW default) + 0.5 * 50 (rules) = 50.0
@@ -248,7 +247,8 @@ def test_scorer_honest_score_with_missing_landmarks():
 
 # ── Test 18: Scorer honest score with all 5 checks passed ────────
 def test_scorer_honest_score_all_five_checks():
-    rep = make_test_rep()
+    # No angle series -> DTW neutral = 50.0
+    rep = make_test_rep(_angle_series=None)
     scorer.score_rep(rep)
     # 5 checks evaluated, 0 faults -> rules_score = 100%
     # Quality = 0.5 * 50 (DTW default) + 0.5 * 100 = 75.0

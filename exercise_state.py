@@ -127,7 +127,7 @@ class ElbowFSM:
                 rep_completed = True
                 self._finish_rep(timestamp_s)
             elif direction < -self.MIN_DELTA:
-                self._finish_rep(timestamp_s)          # ← ADD THIS LINE
+                self._finish_rep(timestamp_s)
                 self.state           = "FLEXING"
                 self._rep_angles     = [angle_deg]
                 self._rep_landmarks  = [frame_lm]
@@ -187,6 +187,9 @@ class ElbowFSM:
 
     def get_last_rep(self):
         return self.reps[-1] if self.reps else None
+
+    def rom_check_params(self):
+        return {"kind": "flex", "target": self.FLEX_THRESH}
 
     def summary(self):
         if not self.reps:
@@ -341,6 +344,9 @@ class ShoulderFSM:
 
     def get_last_rep(self):
         return self.reps[-1] if self.reps else None
+
+    def rom_check_params(self):
+        return {"kind": "raise", "target": self.RAISE_THRESH}
 
     def summary(self):
         if not self.reps:

@@ -1,7 +1,10 @@
 import sys
 import time
 import cv2
-from camera import FrameSource
+try:
+    from .camera import FrameSource
+except ImportError:
+    from capture.camera import FrameSource
 
 
 def record(path, seconds=10, countdown=5):

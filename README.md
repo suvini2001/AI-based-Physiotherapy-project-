@@ -1,6 +1,7 @@
 # Week 1 notes (Milestone 1: computer vision)
 
 ## Setup
+- Python: **Python 3.12 required** (Python 3.10-3.12; `mediapipe==0.10.14` is required for solutions API and unavailable on 3.13+)
 - Laptop: ASUS vivobook i5
 - Webcam: 1280 x 720, 29.8 FPS
 - Lighting: room light on

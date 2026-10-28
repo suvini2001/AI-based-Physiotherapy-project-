@@ -33,8 +33,8 @@ VARIANTS = ["A", "B", "C"]  # Person B adds "C" in the second commit
 class AnglePipeline:
     """One frame in, one cleaned angle out. Separate from the window so it can be tested without a camera."""
 
-    def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None):
-        self.joint, self.variant, self.size = joint, variant, size
+    def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None, side="right"):
+        self.joint, self.variant, self.size, self.side = joint, variant, size, side
         self.thr, self.max_gap, self.calibration = thr, max_gap, calibration
         self.win_norm, self.win_world = deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.recent = deque(maxlen=SPIKE_WINDOW)
@@ -55,8 +55,12 @@ class AnglePipeline:
         # --- Person B plugs variant C (yaw-corrected) here, in the second commit ---
         if self.variant == "C":
             from angles_3d import elbow_angle_yaw_corrected
-            return float(elbow_angle_yaw_corrected(world[None], self.side)[0]) \
-                if not np.isnan(clean_world).any() else None
+            arm_pts = [11, 12, 14, 16] if self.side == "right" else [11, 12, 13, 15]
+            if np.isnan(clean_world[arm_pts]).any():
+                return None
+            res = elbow_angle_yaw_corrected(clean_world[None], self.side)
+            val = float(res[0]) if hasattr(res, "__len__") else float(res)
+            return val if np.isfinite(val) else None
         raise ValueError(f"unknown variant {self.variant}")
     
     def step(self, norm, world):
@@ -72,8 +76,9 @@ class AnglePipeline:
         if raw is not None and self.variant in ("C", "E"):
             from angles_3d import bone_length_gate
             world_frame = np.stack(self.win_world)[-1]
-            gate_ok = bone_length_gate(world_frame[None], self.side)[0]
-            if not gate_ok:
+            gate_ok = bone_length_gate(world_frame[None], self.side)
+            gate_val = gate_ok[0] if hasattr(gate_ok, "__len__") else gate_ok
+            if not gate_val:
                 raw = None
 
         if raw is None:
@@ -107,12 +112,12 @@ def main():
     extractor    = LandmarkExtractor()
     joint        = JOINTS[args.exercise][args.side]
     pipe         = AnglePipeline(joint, args.variant, size,
-                                 src.fps(), thr, max_gap, calibration)
+                                 src.fps(), thr, max_gap, calibration, side=args.side)
 
     # ── scorer ──────────────────────────────────────────────────────
     scorer.load('template.json')
     frame_width, frame_height = size      # src.size() → (width, height)
-    flex_thresh  = 55.0
+    rom_params = {"kind": "flex", "target": 55.0}
 
     # ── feedback display state ──────────────────────────────────────
     _feedback_rep   = None
@@ -120,11 +125,11 @@ def main():
 
     # ── rep callback ────────────────────────────────────────────────
     def on_rep_complete(rep):
-        nonlocal _feedback_rep, _feedback_timer, flex_thresh
-        flex_thresh = fsm.FLEX_THRESH
+        nonlocal _feedback_rep, _feedback_timer, rom_params
+        rom_params = fsm.rom_check_params()
         scorer.score_rep(rep,
                          frame_height=frame_height,
-                         calibrated_flex_thresh=flex_thresh,
+                         rom_params=rom_params,
                          frame_width=frame_width)
         print(f"  Rep {rep['rep_number']:2d} | "
               f"ROM {rep['rom']:.0f}°  "
@@ -147,6 +152,7 @@ def main():
         fsm = ShoulderFSM(rep_callback=on_rep_complete)
     else:
         fsm = ElbowFSM(rep_callback=on_rep_complete)
+    rom_params = fsm.rom_check_params()
 
     # ── session timing ───────────────────────────────────────────────
     # Phase 1: READY    0  → READY_S        stand still, get in position
@@ -216,8 +222,8 @@ def main():
             cal_elapsed = timestamp - READY_S
             if cal_elapsed >= CALIBRATION_S:
                 fsm.calibrate_from_signal(calibration_angles, fps=src.fps())
-                flex_thresh = fsm.FLEX_THRESH
-                phase       = "COUNT"
+                rom_params = fsm.rom_check_params()
+                phase      = "COUNT"
                 print("Thresholds updated from calibration")
 
             if not args.no_overlay:

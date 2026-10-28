@@ -1,5 +1,5 @@
 import numpy as np
-from gap_fill import fill_gaps
+from vision.gap_fill import fill_gaps
 
 
 def make_line(frames=30):

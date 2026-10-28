@@ -5,8 +5,7 @@ Saves: lm (N,33,4), world (N,33,4), size (w,h), fps, f0 (first frame of the wind
 import sys
 import numpy as np
 import cv2
-sys.path.append("pose")
-from landmarks import LandmarkExtractor
+from pose.landmarks import LandmarkExtractor
 
 
 def main(video, f0, f1, out, complexity=1):

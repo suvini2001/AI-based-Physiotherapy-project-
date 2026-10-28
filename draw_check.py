@@ -9,9 +9,7 @@ import argparse
 import numpy as np
 import cv2
 
-sys.path.append("capture")
-sys.path.append("vision")
-from camera import FrameSource
+from capture.camera import FrameSource
 
 ARMS  = {"left": (11, 13, 15), "right": (12, 14, 16)}
 HIPS  = (23, 24)

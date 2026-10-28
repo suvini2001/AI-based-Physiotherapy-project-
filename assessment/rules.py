@@ -35,18 +35,36 @@ def _landmark_array(lm):
     return None
 
 
-def check_rom(rep, calibrated_flex_thresh):
+def check_rom(rep, rom_params):
     """
     Patient-relative ROM check.
-    Uses the FSM's auto-calibrated FLEX_THRESH so impaired patients
-    are not penalised for limited ROM.
+    rom_params can be:
+      - dict: {"kind": "flex", "target": float} or {"kind": "raise", "target": float}
+      - float: backward-compatible calibrated_flex_thresh for elbow flexion
     Returns 'ok', fault string, or None if insufficient data.
     """
-    min_angle = rep.get('min_angle')
-    if min_angle is None or not np.isfinite(min_angle):
+    if isinstance(rom_params, dict):
+        kind = rom_params.get("kind", "flex")
+        target = rom_params.get("target")
+    else:
+        kind = "flex"
+        target = rom_params
+
+    if target is None or not np.isfinite(target):
         return None
-    if min_angle > calibrated_flex_thresh + ROM_TOLERANCE:
-        return 'Incomplete flexion — try to bend your elbow a little further'
+
+    if kind == "flex":          # elbow: low enough?
+        min_angle = rep.get('min_angle')
+        if min_angle is None or not np.isfinite(min_angle):
+            return None
+        if min_angle > target + ROM_TOLERANCE:
+            return 'Incomplete flexion — try to bend your elbow a little further'
+    else:                       # shoulder: high enough?
+        max_angle = rep.get('max_angle')
+        if max_angle is None or not np.isfinite(max_angle):
+            return None
+        if max_angle < target - ROM_TOLERANCE:
+            return 'Raise your arm a little higher'
     return 'ok'
 
 
@@ -187,7 +205,7 @@ def check_asymmetry(rep, frame_height=480.0):
     return 'ok'
 
 
-def run_checks(rep, frame_height=480.0, calibrated_flex_thresh=55.0, frame_width=640.0):
+def run_checks(rep, frame_height=480.0, rom_params=None, frame_width=640.0, calibrated_flex_thresh=None):
     """
     Run all five compensation checks.
     Returns:
@@ -195,8 +213,14 @@ def run_checks(rep, frame_height=480.0, calibrated_flex_thresh=55.0, frame_width
         faults: list of fault strings
         n_checked: number of checks evaluated (with sufficient data)
     """
+    if rom_params is None:
+        if calibrated_flex_thresh is not None:
+            rom_params = calibrated_flex_thresh
+        else:
+            rom_params = {"kind": "flex", "target": 55.0}
+
     named_checks = [
-        ("rom", lambda r: check_rom(r, calibrated_flex_thresh)),
+        ("rom", lambda r: check_rom(r, rom_params)),
         ("speed", check_speed),
         ("shoulder_elevation", lambda r: check_shoulder_elevation(r, frame_height)),
         ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
@@ -217,15 +241,17 @@ def run_checks(rep, frame_height=480.0, calibrated_flex_thresh=55.0, frame_width
     return faults, n_checked
 
 
-def run_all(rep, frame_height=480.0, calibrated_flex_thresh=55.0, frame_width=640.0):
+def run_all(rep, frame_height=480.0, rom_params=None, frame_width=640.0, calibrated_flex_thresh=None):
     """
     Run all five checks. Backward-compatible wrapper returning only faults list.
     Empty list = clean rep.
     """
+    if rom_params is None and calibrated_flex_thresh is not None:
+        rom_params = calibrated_flex_thresh
     faults, _ = run_checks(
         rep,
         frame_height=frame_height,
-        calibrated_flex_thresh=calibrated_flex_thresh,
+        rom_params=rom_params,
         frame_width=frame_width
     )
     return faults

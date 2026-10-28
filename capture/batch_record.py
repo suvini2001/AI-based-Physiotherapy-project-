@@ -2,7 +2,10 @@ import os
 import sys
 import time
 import cv2
-from camera import FrameSource
+try:
+    from .camera import FrameSource
+except ImportError:
+    from capture.camera import FrameSource
 
 # (file name, what to do, seconds to record)
 CLIPS = {

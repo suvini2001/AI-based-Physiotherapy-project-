@@ -33,7 +33,7 @@ def load(template_path='template.json'):
         _template = None
 
 
-def score_rep(rep_dict, frame_height=480.0, calibrated_flex_thresh=55.0, frame_width=640.0):
+def score_rep(rep_dict, frame_height=480.0, rom_params=None, frame_width=640.0, calibrated_flex_thresh=None):
     """
     Fills rep_dict['quality_score'] and rep_dict['faults'] in place.
     Returns the updated rep_dict.
@@ -42,8 +42,9 @@ def score_rep(rep_dict, frame_height=480.0, calibrated_flex_thresh=55.0, frame_w
     faults, n_checked = _rules.run_checks(
         rep_dict,
         frame_height=frame_height,
-        calibrated_flex_thresh=calibrated_flex_thresh,
-        frame_width=frame_width
+        rom_params=rom_params,
+        frame_width=frame_width,
+        calibrated_flex_thresh=calibrated_flex_thresh
     )
 
     # ── DTW score ────────────────────────────────────────────────────

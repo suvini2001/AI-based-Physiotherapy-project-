@@ -3,9 +3,7 @@ Run from the main project folder:
   python make_sample_world.py data/elbow_A_laptop.mp4 data/sample_world_landmarks.npz"""
 import sys
 import numpy as np
-sys.path.append("capture")
-sys.path.append("pose")
-from camera import FrameSource
+from capture.camera import FrameSource
 
 
 def describe_world(world, side="right"):
@@ -17,7 +15,7 @@ def describe_world(world, side="right"):
 
 
 def main(clip_path, out_path):
-    from landmarks import LandmarkExtractor
+    from pose.landmarks import LandmarkExtractor
     src = FrameSource(clip_path)
     extractor = LandmarkExtractor()
     norm_rows, world_rows = [], []
