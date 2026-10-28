@@ -5,7 +5,7 @@
   python demo_cv.py --source data/elbow_A_laptop.mp4        (replay a clip)
   python demo_cv.py --no-overlay                            (FPS without drawing)
 Commit 1 (Person A): the loop, variants A and B, calibration. Commit 2 (Person B): yaw message, variant C, gate."""
-import argparse, sys, time
+import argparse, os, sys, time
 from collections import deque
 import cv2
 import numpy as np
@@ -101,6 +101,8 @@ def main():
     ap.add_argument("--height",      type=int, default=480)
     ap.add_argument("--mirror",      action="store_true")
     ap.add_argument("--no-overlay",  action="store_true")
+    ap.add_argument("--session-out", default="session_log.json",
+                    help="where to save the session, e.g. data/healthy/p01.json")
     args = ap.parse_args()
 
     cfg          = load_config()
@@ -303,7 +305,8 @@ def main():
         cv2.imshow("demo_cv (press q to quit)", last_frame)
         cv2.waitKey(3000)
 
-        save_session(fsm, exercise_name)
+        os.makedirs(os.path.dirname(args.session_out) or ".", exist_ok=True)
+        save_session(fsm, exercise_name, path=args.session_out)
     else:
         print("\nNo reps recorded.")
 

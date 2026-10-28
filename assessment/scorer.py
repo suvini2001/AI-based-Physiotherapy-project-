@@ -25,8 +25,13 @@ def load(template_path='template.json'):
     try:
         _template = _dtw.load_template(template_path)
         print(f"Template loaded: {_template.get('exercise','?')}  "
+              f"recorded_by={_template.get('recorded_by','?')}  "
               f"mu={_template.get('mu_dtw', 0):.1f}  "
-              f"sigma={_template.get('sigma_dtw', 1):.1f}")
+              f"sigma={_template.get('sigma_dtw', 0):.1f}")
+        if not _dtw.is_calibrated(_template):
+            print("WARNING: template is not calibrated from real reps. "
+                  "DTW part of the score is fixed at a neutral 50. "
+                  "Run scripts/build_template.py.")
     except FileNotFoundError:
         print(f"WARNING: {template_path} not found. "
               f"DTW scoring disabled. Run scripts/make_template.py first.")
@@ -49,9 +54,12 @@ def score_rep(rep_dict, frame_height=480.0, rom_params=None, frame_width=640.0, 
 
     # ── DTW score ────────────────────────────────────────────────────
     dtw_score = 50.0  # neutral default
-    if _template is not None and rep_dict.get('_angle_series'):
+    rep_dict['dtw_used'] = False
+    if _dtw.is_calibrated(_template) and rep_dict.get('_angle_series'):
         dtw_score = _dtw.dtw_score(
             rep_dict['_angle_series'], _template)
+        rep_dict['dtw_used'] = True
+    rep_dict['dtw_score'] = dtw_score
 
     # ── combined quality score ────────────────────────────────────────
     # 0.5 * DTW + 0.5 * rules_score — from work plan

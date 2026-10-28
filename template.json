@@ -1,7 +1,7 @@
 {
   "exercise": "elbow_flexion",
-  "recorded_by": "physiotherapist_reference",
-  "n_reps": 10,
+  "recorded_by": "synthetic_cosine_for_testing",
+  "n_reps": 0,
   "mean_trajectory": [
     160.0,
     159.88,
@@ -208,5 +208,8 @@
   ],
   "mu_dtw": 199.55,
   "sigma_dtw": 25.0,
-  "n_calibration_reps": 10
+  "n_calibration_reps": 0,
+  "calibrated": false,
+  "n_people": 0,
+  "note": "Synthetic 160->40->160 deg cosine for code testing only. mu/sigma are hand-set. Replace with scripts/build_template.py on real healthy reps before reporting any DTW result."
 }
