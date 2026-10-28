@@ -174,3 +174,17 @@ def test_shoulder_fsm_calibration_and_scoring_rom_check():
     assert good_fault == "ok"
     scorer.score_rep(good_rep, rom_params=params)
     assert not any("raise" in f.lower() for f in good_rep["faults"])
+
+
+def test_extending_to_flexing_reversal_flags_rep_completed():
+    fsm = ElbowFSM()
+    signal = [162.0] * 5 + list(np.linspace(162, 40, 20)) + [60.0, 90.0, 130.0, 120.0]
+    completed = []
+    for i, a in enumerate(signal):
+        state, rep_done = fsm.update(float(a), i / 30.0)
+        if rep_done:
+            completed.append((i, state))
+    assert len(completed) == 1
+    assert completed[0][1] == "FLEXING"
+    assert fsm.rep_count == 1
+

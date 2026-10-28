@@ -1,77 +1,79 @@
-# Week 1 notes (Milestone 1: computer vision)
+# AI-based Physiotherapy — webcam exercise monitoring
+
+Real-time, single-webcam monitoring of upper-limb home exercises (elbow flexion,
+shoulder abduction). MediaPipe Pose → cleaned joint angle → repetition counting
+(finite-state machine) → per-rep assessment (posture rules + DTW similarity) →
+on-screen and spoken feedback.
 
 ## Setup
-- Python: **Python 3.12 required** (Python 3.10-3.12; `mediapipe==0.10.14` is required for solutions API and unavailable on 3.13+)
-- Laptop: ASUS vivobook i5
-- Webcam: 1280 x 720, 29.8 FPS
-- Lighting: room light on
-- Test clip: `data/elbow_A_laptop.mp4` + `data/elbow_A_landmarks.npy` (301 frames, ~29.5 FPS, right arm moves)
 
-## Progress
+- **Python 3.10–3.12** (`mediapipe==0.10.14` is needed for the solutions API and is not available on 3.13+)
 
-| Step | Topic | Status | Files |
-|---|---|---|---|
-| - | Data formats and sample files | Done | `Formats.md`, `data/sample_*` |
-| 1.1 | Camera check (resolution, real FPS) | Done | `camera_check.py` |
-| 1.2 | Capture loop, FPS counter, record and replay | Done | `capture/camera.py`, `capture/recoder.py` |
-| 1.3 | Pose extractor (33 landmarks) and first landmark file | Done | `pose/landmarks.py`, `extract_clip.py` |
-| - | Landmark overlay check | Done | `draw_check.py` |
-| 1.4 | Visibility mask and threshold test | Done | `visibility.py`, `config.yaml` |
-| 1.8 | Elbow angle with unit tests (knee deferred) | Done | `angles.py`, `test_angles.py` |
-| 1.5 | Smoothing filters and comparison | Done | `filters.py`, `evaluate_filters.py`, `plot_filters.py` |
-| - | Raw and smoothed angle CSVs | Done | `data/elbow_A_angles*.csv` |
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows   (Linux/macOS: source .venv/bin/activate)
+pip install -r requirements.txt
+python -m pytest -q             # all tests should pass
+```
 
-## Visibility threshold (`python visibility.py`)
+## Run
 
-| Threshold | All points dropped | Right-arm points dropped |
+**1. Camera setup (elbow flexion).** Turn fully side-on to the camera, camera at
+shoulder height, 2–3 m away, whole upper body in frame. The arm nearest the
+camera is measured: right side to the camera → `--side right`.
+
+**2. Personal calibration (straight-arm check).** Loads `data/population_curve.json`
+and saves `data/user_calibration.json`. The status must be `ok`; `warn` means the
+camera position is wrong (for example a straight arm reading ~90°).
+
+```bash
+python capture/calibrate_ui.py --side right
+```
+
+**3. Exercise session.**
+
+```bash
+python demo_cv.py --exercise elbow --side right --variant A \
+    --calibration data/user_calibration.json
+```
+
+No `WARNING:` lines should be printed at start-up. Phases: READY (stand still) →
+CALIB (move through your full range; FSM thresholds adapt to you) → COUNT.
+Press `q` to finish; the session is saved to `--session-out` (default `session_log.json`).
+
+Angle variants: `A` 2D pixel angle (used with the calibration curve), `B` MediaPipe
+3D world landmarks, `C` yaw-corrected 3D.
+
+## How each part works
+
+| Part | Files | Method |
 |---|---|---|
-| 0.5 | 24.1% | 0.0% |
-| 0.6 | 24.1% | 0.0% |
-| 0.7 | 24.1% | 0.0% |
-| 0.8 | 24.2% | 0.0% |
-| 0.9 | 24.6% | 3.1% |
+| Pose + cleaning | `pose/`, `visibility.py`, `vision/gap_fill.py`, `filters.py` | Visibility mask 0.70, gap fill ≤ 5 frames, median-5 + One Euro filter |
+| Angle calibration | `calibration.py`, `scripts/fit_calibration.py`, `capture/calibrate_ui.py` | Monotonic population curve (raw 2D → mocap angle), profile view, fitted on REHAB24-6, LOPO MAE 20.1° → 16.3° |
+| Rep counting | `exercise_state.py` | 4-state FSM per exercise, thresholds tuned from the CALIB phase |
+| Posture rules | `assessment/rules.py` | Shoulder elevation, trunk lean, asymmetry (ideas adapted from Pavlikov et al. 2026; thresholds preliminary), ROM, speed |
+| DTW score | `assessment/dtw.py`, `templates/` | Labchurat et al. 2026: Z = (d − μ)/σ from healthy reps, score = 100 / max(Z, 1) |
+| Quality score | `assessment/scorer.py` | 0.5·DTW + 0.5·rules when the template is calibrated, rules only otherwise |
 
-- 0.5-0.8 keep every arm point; the ~24% dropped are leg points below the frame. 0.9 is too strict.
-- **Chosen: 0.70** (in `config.yaml`). One easy clip only; validate with a protractor in Week 2.
-- Points outside the picture (x or y not in 0-1) are dropped whatever their visibility.
+## Building a real DTW template
 
-## Elbow angle
-- Dot-product angle in 2D (landmarks 12, 14, 16); 7 unit tests pass. Raw range 0.6-173.3 deg.
-- Limit: when the arm points at the camera the 2D angle collapses to ~1-9 deg (frames 43-47, 58-59). Not a tracking error.
-- Knee angle deferred to Milestone 2 (needs a side-view clip).
+The templates in `templates/` are **synthetic** (`"calibrated": false`), so the
+DTW part is switched off. To calibrate, record healthy volunteers (one file per person):
 
-## Filters
-Synthetic test with known truth (3 deg noise + spikes):
+```bash
+python demo_cv.py --exercise elbow --side right --variant A \
+    --calibration data/user_calibration.json --session-out data/healthy/p01.json
+python scripts/build_template.py data/healthy/*.json --exercise elbow_flexion \
+    --recorded-by healthy_volunteers --out templates/elbow_flexion.json
+python scripts/evaluate_dtw.py --lopo data/healthy/*.json --abnormal data/abnormal/*.json
+```
 
-| Filter | Error (deg) | Live? |
-|---|---|---|
-| Median 5 + Savitzky-Golay (9,3) | 2.32 | no |
-| Median 5 + Butterworth 6 Hz | 2.46 | no |
-| Savitzky-Golay (9,3) alone | 4.86 | no |
-| Butterworth 6 Hz alone | 5.70 | no |
-| Butterworth 6 Hz causal | 7.87 (1 frame lag) | yes |
-| No filter | 8.71 | - |
+Participant recordings are git-ignored. See `data/README.md` for dataset licences.
 
-Real clip (median 5 + Savitzky-Golay 9,3, clipped to 0-180):
-- One-frame spike at 2.03 s: 169.9 -> 56.1 deg. Jitter: 4.15 -> 3.08 deg/frame.
-- Filters overshoot below 0 deg (about -3) before clipping.
-- Range shifts 0.6-173.3 -> 0-177.4 deg, which matters for ROM later.
-- Causal Butterworth leaves spikes (no live spike removal yet).
-- **Provisional:** offline = median 5 + Savitzky-Golay (9,3); live filter not chosen.
+## Status and known limits
 
-## Next (Week 2) and open items
-- Gap filling (1.6), skeleton overlay and `demo_cv.py` (1.9), normalise (1.7).
-- Protractor check at 90, 120, 160 deg; re-test threshold and filters on real references.
-- Causal spike filter; choose the live filter (causal Butterworth vs One Euro).
-- Joint test of the full chain on the same clip.
-- Agree: Milestone 2 `exercises.yaml` format, and who records the reference clips.
+- Calibration curve: REHAB24-6 profile data covers truth angles 64–175°; below 64° the curve is extrapolated. To be extended with Fit3D biceps curls and checked with a goniometer on our own setup.
+- DTW templates and rule thresholds still need real recordings.
+- Benchmark notebooks: `benchmark_3d_world.ipynb` (angle variants, learned correction), `rehab24_validation_v4.ipynb`.
 
-## max_gap frames (data/gap_fill_choice.png)
-max_gap_frames = 5 (0.17 s)\ plot data/gap_fill_choice.png; tolerance 8°; one easy clip, re-check on harder clips.
-
-| Run | Resolution | Mean FPS | Notes |
-|---  |---|---|---|
-| Replay clip, --fast | 640x480 | 41.5 | pose 19.0 ms/frame |
-| Live, with overlay | 640x480 | 29.0 | camera-limited (~30 FPS), pose 20.5 ms/frame |
-| Live, no overlay | 640x480 | ? | fill in |
-| Live, with overlay | 1280x720 | ? | fill in |
+Earlier milestone notes: `docs/week1_notes.md`.

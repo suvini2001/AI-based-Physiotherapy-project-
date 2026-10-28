@@ -220,7 +220,6 @@ def main():
         elif phase == "CALIB":
             # announce once
             if not _announced_calib:
-                time.sleep(0.3)
                 audio_feedback.speak(
                     "Move your arm slowly through its full range.",
                     priority=True)
@@ -245,7 +244,6 @@ def main():
         elif phase == "COUNT":
             # announce once
             if not _announced_count:
-                time.sleep(0.3)
                 audio_feedback.speak(
                     "Good. Begin your exercise now.",
                     priority=True)

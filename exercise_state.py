@@ -128,7 +128,10 @@ class ElbowFSM:
                 rep_completed = True
                 self._finish_rep(timestamp_s)
             elif direction < -self.MIN_DELTA:
+                before = self.rep_count
                 self._finish_rep(timestamp_s)
+                if self.rep_count > before:
+                    rep_completed = True
                 self.state           = "FLEXING"
                 self._rep_angles     = [angle_deg]
                 self._rep_landmarks  = [frame_lm]
