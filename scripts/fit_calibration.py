@@ -31,13 +31,34 @@ def load_pairs(path, views=None):
     return raw[keep], truth[keep], person[keep], view[keep]
 
 
-def lopo(raw, truth, person, min_count=15):
+def extend_below(params):
+    """
+    Below the lowest well-supported knot, keep the same offset instead of a
+    flat line. REHAB24-6 profile data has almost no truth angles under ~60 deg
+    (push-ups), so a flat curve would map every flexed elbow (30-60 deg) to
+    ~62 deg and squash the bottom of every curl.
+    """
+    kr, kc = list(params["knots_raw"]), list(params["knots_corrected"])
+    if kr[0] > 0:
+        off = kc[0] - kr[0]
+        kr.insert(0, 0.0)
+        kc.insert(0, max(0.0, off))
+    return {**params, "knots_raw": kr, "knots_corrected": kc,
+            "extrapolated_below": round(float(params["knots_raw"][0]), 1)}
+
+
+def fit(raw, truth, min_count, extrapolate):
+    params = fit_curve(raw, truth, min_count=min_count)
+    return extend_below(params) if extrapolate else params
+
+
+def lopo(raw, truth, person, min_count=15, extrapolate=True):
     """Per held-out person: MAE before and after a curve fitted on the others."""
     rows = []
     for p in np.unique(person):
         tr, te = person != p, person == p
         try:
-            params = fit_curve(raw[tr], truth[tr], min_count=min_count)
+            params = fit(raw[tr], truth[tr], min_count, extrapolate)
         except ValueError:
             continue
         cal = apply_calibration(raw[te], params)
@@ -56,7 +77,10 @@ def main():
     ap.add_argument("--view-class", default=None, help="front / profile / ...")
     ap.add_argument("--variant", default="A", help="angle method the pairs came from")
     ap.add_argument("--dataset", default="REHAB24-6")
-    ap.add_argument("--min-count", type=int, default=15)
+    ap.add_argument("--min-count", type=int, default=300,
+                    help="frames a 10-deg bin needs before it becomes a knot")
+    ap.add_argument("--no-extrapolate", action="store_true",
+                    help="flat curve below the lowest knot (old behaviour)")
     ap.add_argument("--out", default="data/population_curve.json")
     a = ap.parse_args()
 
@@ -66,7 +90,8 @@ def main():
     if n_people < 3:
         sys.exit("Need frames from at least 3 people.")
 
-    rows = lopo(raw, truth, person, a.min_count)
+    extrapolate = not a.no_extrapolate
+    rows = lopo(raw, truth, person, a.min_count, extrapolate)
     if rows:
         before = np.median([r[2] for r in rows])
         after = np.median([r[3] for r in rows])
@@ -75,8 +100,12 @@ def main():
         for p, n, b, c, bias in rows:
             print(f"    {p:>10s}  n={n:6d}  raw {b:5.1f}  cal {c:5.1f}  bias {bias:+5.1f}")
 
-    params = fit_curve(raw, truth, min_count=a.min_count)
+    params = fit(raw, truth, a.min_count, extrapolate)
+    lo, hi = np.percentile(truth, [5, 95])
+    print(f"truth range covered (5-95%): {lo:.0f}-{hi:.0f} deg; "
+          f"angles outside it are extrapolated, not measured")
     params.update({
+        "truth_range_5_95": [round(float(lo), 1), round(float(hi), 1)],
         "variant": a.variant,
         "view_class": a.view_class,
         "fitted_views": sorted(map(str, set(view))),

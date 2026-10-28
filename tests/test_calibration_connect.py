@@ -55,3 +55,21 @@ def test_no_warnings_for_good_calibration():
     good = {**identity_params(), "curve_version": "pop-curve-v1", "variant": "A",
             "straight_check": {"status": "ok", "message": "fine"}}
     assert calibration_warnings(good, "A") == []
+
+
+def test_flexed_angles_are_not_squashed(tmp_path):
+    """Training truth never goes below 60 deg (like REHAB24-6 push-ups)."""
+    rng = np.random.default_rng(1)
+    truth = rng.uniform(60, 175, 5 * 3000)
+    raw = truth + 10 + rng.normal(0, 3, truth.size)
+    person = np.repeat([f"P{i}" for i in range(5)], 3000)
+    pairs, out = tmp_path / "p.npz", tmp_path / "c.json"
+    np.savez(pairs, raw=raw, truth=truth, person=person,
+             view=np.full(truth.size, "Profile"))
+    r = subprocess.run([sys.executable, "scripts/fit_calibration.py", str(pairs),
+                        "--out", str(out)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    p = load_params(str(out))
+    # raw 40 is ~30 deg truth under a +10 offset: must stay well below 60
+    assert apply_calibration(40.0, p) < 45
+    assert apply_calibration(30.0, p) < apply_calibration(50.0, p)

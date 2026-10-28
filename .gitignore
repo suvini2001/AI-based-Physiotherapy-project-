@@ -11,3 +11,9 @@ data/healthy/
 data/abnormal/
 data/test_*/
 data/user_calibration.json
+
+# Fit3D (non-commercial licence, no redistribution)
+data/fit3d/
+data/calib_pairs_fit3d.npz
+data/calib_pairs_all.npz
+data/population_curve_fit3d.json
