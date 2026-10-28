@@ -18,123 +18,214 @@ ASYM_THRESHOLD = 0.04   # shoulder height difference > 4% of frame = fault
 ROM_TOLERANCE  = 10.0
 
 
+def _landmark_array(lm):
+    """
+    Safely convert landmarks input to a float numpy array of shape (frames, 33, >=2).
+    Returns None if lm is None, cannot be converted, or has invalid shape/no frames.
+    Avoids ambiguous truth value errors with arrays.
+    """
+    if lm is None:
+        return None
+    try:
+        arr = np.asarray(lm, dtype=float)
+        if arr.ndim == 3 and arr.shape[0] > 0 and arr.shape[1] == 33 and arr.shape[2] >= 2:
+            return arr
+    except Exception:
+        return None
+    return None
+
+
 def check_rom(rep, calibrated_flex_thresh):
     """
     Patient-relative ROM check.
     Uses the FSM's auto-calibrated FLEX_THRESH so impaired patients
     are not penalised for limited ROM.
+    Returns 'ok', fault string, or None if insufficient data.
     """
-    if rep['min_angle'] > calibrated_flex_thresh + ROM_TOLERANCE:
+    min_angle = rep.get('min_angle')
+    if min_angle is None or not np.isfinite(min_angle):
+        return None
+    if min_angle > calibrated_flex_thresh + ROM_TOLERANCE:
         return 'Incomplete flexion — try to bend your elbow a little further'
-    return None
+    return 'ok'
 
 
 def check_speed(rep):
-    """Rep too fast — less than 1 second."""
-    if rep['duration_s'] < SPEED_MIN_S:
+    """
+    Rep too fast — less than 1 second.
+    Returns 'ok', fault string, or None if insufficient data.
+    """
+    dur = rep.get('duration_s')
+    if dur is None or not np.isfinite(dur):
+        return None
+    if dur < SPEED_MIN_S:
         return 'Moving too fast — slow down and control the movement'
-    return None
+    return 'ok'
 
 
-def check_shoulder_elevation(rep, frame_height):
+def check_shoulder_elevation(rep, frame_height=480.0):
     """
     Shoulder rises during the rep (checks both shoulders).
     Landmark 11 = Left shoulder, Landmark 12 = Right shoulder.
+    Baseline = median of first 3 finite frames.
+    Evaluates 90th percentile of shoulder rise across valid frames.
+    Returns 'ok', fault string, or None if insufficient data.
     """
-    lm = rep.get('_landmarks')
-    if not lm or len(lm) < 2:
+    lm = _landmark_array(rep.get('_landmarks'))
+    if lm is None:
         return None
-    try:
-        # Detect if landmarks are pixel coordinates or normalized (0-1)
-        is_pixel = lm[0][12][1] > 1.0
-        scale = frame_height if is_pixel else 1.0
 
-        # Check right shoulder (12) and left shoulder (11)
-        y_start_r, y_start_l = lm[0][12][1], lm[0][11][1]
-        y_peak_r = min(f[12][1] for f in lm)
-        y_peak_l = min(f[11][1] for f in lm)
+    y_r = lm[:, 12, 1]
+    y_l = lm[:, 11, 1]
 
-        delta_r = (y_start_r - y_peak_r) / scale
-        delta_l = (y_start_l - y_peak_l) / scale
+    finite_r = y_r[np.isfinite(y_r)]
+    finite_l = y_l[np.isfinite(y_l)]
 
-        max_delta = max(delta_r, delta_l)
-
-        if max_delta > ELEV_THRESHOLD:
-            return 'Keep your shoulder down'
-    except (IndexError, TypeError):
+    if len(finite_r) < 3 or len(finite_l) < 3:
         return None
-    return None
+
+    # Detect if landmarks are pixel coordinates or normalized (0-1)
+    is_pixel = bool(np.nanmedian(finite_r) > 1.0 or np.nanmedian(finite_l) > 1.0)
+    scale = float(frame_height) if is_pixel else 1.0
+
+    base_r = float(np.median(finite_r[:3]))
+    base_l = float(np.median(finite_l[:3]))
+
+    # Rise = baseline - y (image Y increases downwards)
+    rise_r = (base_r - finite_r) / scale
+    rise_l = (base_l - finite_l) / scale
+
+    # 90th percentile of rise across valid frames
+    p90_r = float(np.percentile(rise_r, 90))
+    p90_l = float(np.percentile(rise_l, 90))
+    max_rise = max(p90_r, p90_l)
+
+    if max_rise > ELEV_THRESHOLD:
+        return 'Keep your shoulder down'
+    return 'ok'
 
 
-def check_trunk_lean(rep, frame_height=None):
+def check_trunk_lean(rep, frame_height=480.0, frame_width=640.0):
     """
     Torso leans sideways during the rep.
-    Uses hip midpoint -> shoulder midpoint vector angle from vertical.
+    Uses hip midpoint -> shoulder midpoint vector angle from vertical in pixel space.
+    Evaluates 90th percentile of lean angles across valid frames.
+    Returns 'ok', fault string, or None if insufficient data.
     """
-    lm = rep.get('_landmarks')
-    if not lm or len(lm) < 2:
+    lm = _landmark_array(rep.get('_landmarks'))
+    if lm is None:
         return None
-    try:
-        peak_frame = lm[len(lm) // 2]
-        lhip = peak_frame[23][:2]
-        rhip = peak_frame[24][:2]
-        lsho = peak_frame[11][:2]
-        rsho = peak_frame[12][:2]
 
-        mid_hip = np.array([(lhip[0]+rhip[0])/2, (lhip[1]+rhip[1])/2])
-        mid_sho = np.array([(lsho[0]+rsho[0])/2, (lsho[1]+rsho[1])/2])
-        torso = mid_sho - mid_hip
+    lsho = lm[:, 11, :2]
+    rsho = lm[:, 12, :2]
+    lhip = lm[:, 23, :2]
+    rhip = lm[:, 24, :2]
 
-        # Image Y increases downwards, so -torso[1] points upward
-        lean = abs(np.degrees(np.arctan2(torso[0], -torso[1])))
-        if lean > LEAN_THRESHOLD:
-            return 'Keep your back straight — you are leaning sideways'
-    except (IndexError, TypeError):
+    valid_mask = (
+        np.isfinite(lsho).all(axis=1) &
+        np.isfinite(rsho).all(axis=1) &
+        np.isfinite(lhip).all(axis=1) &
+        np.isfinite(rhip).all(axis=1)
+    )
+    if np.count_nonzero(valid_mask) < 3:
         return None
-    return None
+
+    lsho_v = lsho[valid_mask]
+    rsho_v = rsho[valid_mask]
+    lhip_v = lhip[valid_mask]
+    rhip_v = rhip[valid_mask]
+
+    is_pixel = bool(np.nanmedian(rsho_v[:, 1]) > 1.0 or np.nanmedian(lsho_v[:, 1]) > 1.0)
+    sx = 1.0 if is_pixel else float(frame_width if frame_width else 640.0)
+    sy = 1.0 if is_pixel else float(frame_height if frame_height else 480.0)
+
+    mid_hip_x = ((lhip_v[:, 0] + rhip_v[:, 0]) / 2.0) * sx
+    mid_hip_y = ((lhip_v[:, 1] + rhip_v[:, 1]) / 2.0) * sy
+    mid_sho_x = ((lsho_v[:, 0] + rsho_v[:, 0]) / 2.0) * sx
+    mid_sho_y = ((lsho_v[:, 1] + rsho_v[:, 1]) / 2.0) * sy
+
+    dx = mid_sho_x - mid_hip_x
+    dy = mid_sho_y - mid_hip_y
+
+    # Image Y increases downwards, so -dy points upward towards shoulders
+    leans = np.abs(np.degrees(np.arctan2(dx, -dy)))
+    peak_lean = float(np.percentile(leans, 90))
+
+    if peak_lean > LEAN_THRESHOLD:
+        return 'Keep your back straight — you are leaning sideways'
+    return 'ok'
 
 
-def check_asymmetry(rep, frame_height):
+def check_asymmetry(rep, frame_height=480.0):
     """
     Left and right shoulders at different heights (one shrugged).
+    Evaluates 90th percentile of shoulder height differences across valid frames.
+    Returns 'ok', fault string, or None if insufficient data.
     """
-    lm = rep.get('_landmarks')
-    if not lm or len(lm) < 2:
+    lm = _landmark_array(rep.get('_landmarks'))
+    if lm is None:
         return None
-    try:
-        peak_frame = lm[len(lm) // 2]
-        y_left  = peak_frame[11][1]
-        y_right = peak_frame[12][1]
 
-        is_pixel = y_left > 1.0
-        scale = frame_height if is_pixel else 1.0
+    y_l = lm[:, 11, 1]
+    y_r = lm[:, 12, 1]
 
-        asym = abs(y_left - y_right) / scale
-        if asym > ASYM_THRESHOLD:
-            return 'Keep your shoulders level'
-    except (IndexError, TypeError):
+    valid_mask = np.isfinite(y_l) & np.isfinite(y_r)
+    if np.count_nonzero(valid_mask) < 3:
         return None
-    return None
+
+    y_l_v = y_l[valid_mask]
+    y_r_v = y_r[valid_mask]
+
+    is_pixel = bool(np.nanmedian(y_l_v) > 1.0 or np.nanmedian(y_r_v) > 1.0)
+    scale = float(frame_height) if is_pixel else 1.0
+
+    asyms = np.abs(y_l_v - y_r_v) / scale
+    peak_asym = float(np.percentile(asyms, 90))
+
+    if peak_asym > ASYM_THRESHOLD:
+        return 'Keep your shoulders level'
+    return 'ok'
 
 
-def run_all(rep, frame_height=480.0, calibrated_flex_thresh=55.0):
+def run_checks(rep, frame_height=480.0, calibrated_flex_thresh=55.0, frame_width=640.0):
     """
-    Run all five checks. Returns list of fault strings.
+    Run all five compensation checks.
+    Returns:
+        (faults, n_checked)
+        faults: list of fault strings
+        n_checked: number of checks evaluated (with sufficient data)
+    """
+    named_checks = [
+        ("rom", lambda r: check_rom(r, calibrated_flex_thresh)),
+        ("speed", check_speed),
+        ("shoulder_elevation", lambda r: check_shoulder_elevation(r, frame_height)),
+        ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
+        ("asymmetry", lambda r: check_asymmetry(r, frame_height)),
+    ]
+    faults = []
+    n_checked = 0
+    for name, fn in named_checks:
+        try:
+            res = fn(rep)
+            if res is None:
+                continue   # insufficient data, cannot judge
+            n_checked += 1
+            if res != 'ok':
+                faults.append(res)
+        except Exception as e:
+            print(f"WARNING: rule '{name}' failed: {e}")
+    return faults, n_checked
+
+
+def run_all(rep, frame_height=480.0, calibrated_flex_thresh=55.0, frame_width=640.0):
+    """
+    Run all five checks. Backward-compatible wrapper returning only faults list.
     Empty list = clean rep.
     """
-    faults = []
-    checks = [
-        lambda r: check_rom(r, calibrated_flex_thresh),
-        check_speed,
-        lambda r: check_shoulder_elevation(r, frame_height),
-        lambda r: check_trunk_lean(r, frame_height),
-        lambda r: check_asymmetry(r, frame_height),
-    ]
-    for fn in checks:
-        try:
-            result = fn(rep)
-            if result:
-                faults.append(result)
-        except Exception:
-            pass   # never crash the main loop
+    faults, _ = run_checks(
+        rep,
+        frame_height=frame_height,
+        calibrated_flex_thresh=calibrated_flex_thresh,
+        frame_width=frame_width
+    )
     return faults

@@ -33,16 +33,17 @@ def load(template_path='template.json'):
         _template = None
 
 
-def score_rep(rep_dict, frame_height=480.0, calibrated_flex_thresh=55.0):
+def score_rep(rep_dict, frame_height=480.0, calibrated_flex_thresh=55.0, frame_width=640.0):
     """
     Fills rep_dict['quality_score'] and rep_dict['faults'] in place.
     Returns the updated rep_dict.
     """
     # ── rules ────────────────────────────────────────────────────────
-    faults = _rules.run_all(
+    faults, n_checked = _rules.run_checks(
         rep_dict,
         frame_height=frame_height,
-        calibrated_flex_thresh=calibrated_flex_thresh
+        calibrated_flex_thresh=calibrated_flex_thresh,
+        frame_width=frame_width
     )
 
     # ── DTW score ────────────────────────────────────────────────────
@@ -52,9 +53,9 @@ def score_rep(rep_dict, frame_height=480.0, calibrated_flex_thresh=55.0):
             rep_dict['_angle_series'], _template)
 
     # ── combined quality score ────────────────────────────────────────
-    # 0.5 * DTW + 0.5 * rules_passed — from work plan
-    rules_score  = ((5 - len(faults)) / 5) * 100
-    quality      = round(0.5 * dtw_score + 0.5 * rules_score, 1)
+    # 0.5 * DTW + 0.5 * rules_score — from work plan
+    rules_score = ((n_checked - len(faults)) / n_checked * 100.0) if n_checked > 0 else 100.0
+    quality     = round(0.5 * dtw_score + 0.5 * rules_score, 1)
 
     rep_dict['quality_score'] = quality
     rep_dict['faults']        = faults

@@ -12,6 +12,16 @@ import time
 import numpy as np
 
 
+def _frame_landmarks(landmarks):
+    """
+    Ensure landmarks are converted to a copy of float array of shape (33, 4).
+    If landmarks is None, return a (33, 4) array filled with NaN.
+    """
+    if landmarks is None:
+        return np.full((33, 4), np.nan)
+    return np.array(landmarks, dtype=float, copy=True)
+
+
 # ── Elbow Flexion FSM ────────────────────────────────────────────────
 class ElbowFSM:
     """
@@ -42,6 +52,7 @@ class ElbowFSM:
         self.rep_callback = rep_callback
 
         self._rep_angles     = []
+        self._rep_landmarks  = []
         self._rep_start_time = None
         self.reps            = []        # full history, for session_log.json
         self._min_rep_s      = 0.5
@@ -72,24 +83,28 @@ class ElbowFSM:
               f"EXTEND={self.EXTEND_THRESH:.0f}°  "
               f"range={sig_range:.0f}°")
 
-    def update(self, angle_deg, timestamp_s):
+    def update(self, angle_deg, timestamp_s, landmarks=None):
         """
         Feed one frame. Returns (current_state, rep_just_completed).
         angle_deg:   float or None (NaN frame → skip)
         timestamp_s: float seconds since session start
+        landmarks:   (33, 4) landmark array or None
         """
         if angle_deg is None or not np.isfinite(angle_deg):
             return self.state, False
 
+        frame_lm = _frame_landmarks(landmarks)
         direction = (angle_deg - self.prev_angle
                      if self.prev_angle is not None else 0.0)
         self._rep_angles.append(angle_deg)
+        self._rep_landmarks.append(frame_lm)
         rep_completed = False
 
         if self.state == "EXTENDED":
             if direction < -self.MIN_DELTA:
                 self.state = "FLEXING"
                 self._rep_angles     = [angle_deg]
+                self._rep_landmarks  = [frame_lm]
                 self._rep_start_time = timestamp_s
 
         elif self.state == "FLEXING":
@@ -99,6 +114,7 @@ class ElbowFSM:
                 # reversed before full flex — partial rep, reset
                 self.state           = "EXTENDED"
                 self._rep_angles     = []
+                self._rep_landmarks  = []
                 self._rep_start_time = None
 
         elif self.state == "FLEXED":
@@ -114,6 +130,7 @@ class ElbowFSM:
                 self._finish_rep(timestamp_s)          # ← ADD THIS LINE
                 self.state           = "FLEXING"
                 self._rep_angles     = [angle_deg]
+                self._rep_landmarks  = [frame_lm]
                 self._rep_start_time = timestamp_s
 
         self.prev_angle = angle_deg
@@ -134,6 +151,7 @@ class ElbowFSM:
 
         if rom < self.MIN_ROM or duration < min_rep_s:
             self._rep_angles     = []
+            self._rep_landmarks  = []
             self._rep_start_time = None
             return
         rep = {
@@ -146,10 +164,12 @@ class ElbowFSM:
             "quality_score": None,
             "faults":        [],
             "_angle_series": [round(float(a), 1) for a in self._rep_angles],
+            "_landmarks":    np.stack(self._rep_landmarks),   # shape (frames, 33, 4)
         }
         self.rep_count += 1
         self.reps.append(rep)
         self._rep_angles     = []
+        self._rep_landmarks  = []
         self._rep_start_time = None
 
         if self.rep_callback:
@@ -209,6 +229,7 @@ class ShoulderFSM:
         self._min_rep_s = 0.5
 
         self._rep_angles     = []
+        self._rep_landmarks  = []
         self._rep_start_time = None
         self.reps            = []
 
@@ -230,20 +251,23 @@ class ShoulderFSM:
         print(f"ShoulderFSM calibrated: RAISE={self.RAISE_THRESH:.0f}°  "
               f"REST={self.REST_THRESH:.0f}°  range={sig_range:.0f}°")
         
-    def update(self, angle_deg, timestamp_s):
+    def update(self, angle_deg, timestamp_s, landmarks=None):
         if angle_deg is None or not np.isfinite(angle_deg):
             return self.state, False
 
+        frame_lm = _frame_landmarks(landmarks)
         direction = (angle_deg - self.prev_angle
                      if self.prev_angle is not None else 0.0)
         if self.state != "RESTING":
             self._rep_angles.append(angle_deg)
+            self._rep_landmarks.append(frame_lm)
         rep_completed = False
 
         if self.state == "RESTING":
             if direction > self.MIN_DELTA:
                 self.state           = "RAISING"
                 self._rep_angles     = [angle_deg]
+                self._rep_landmarks  = [frame_lm]
                 self._rep_start_time = timestamp_s
 
         elif self.state == "RAISING":
@@ -252,6 +276,7 @@ class ShoulderFSM:
             elif direction < -self.MIN_DELTA:
                 self.state           = "RESTING"
                 self._rep_angles     = []
+                self._rep_landmarks  = []
                 self._rep_start_time = None
 
         elif self.state == "RAISED":
@@ -280,6 +305,7 @@ class ShoulderFSM:
 
         if rom < self.MIN_ROM or duration < min_rep_s:
             self._rep_angles     = []
+            self._rep_landmarks  = []
             self._rep_start_time = None
             return
 
@@ -293,10 +319,12 @@ class ShoulderFSM:
             "quality_score": None,
             "faults":        [],
             "_angle_series": [round(float(a), 1) for a in self._rep_angles],
+            "_landmarks":    np.stack(self._rep_landmarks),   # shape (frames, 33, 4)
         }
         self.rep_count += 1
         self.reps.append(rep)
         self._rep_angles     = []
+        self._rep_landmarks  = []
         self._rep_start_time = None
         if self.rep_callback:
             self.rep_callback(rep)

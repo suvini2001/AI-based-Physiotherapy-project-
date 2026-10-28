@@ -13,17 +13,14 @@ import assessment.scorer as scorer
 import audio_feedback
 from vision.overlay import draw_feedback, draw_session_summary
 
-sys.path.append("capture")
-sys.path.append("pose")
-sys.path.append("vision")
-from camera import FrameSource, FpsCounter
-from landmarks import LandmarkExtractor
+from capture.camera import FrameSource, FpsCounter
+from pose.landmarks import LandmarkExtractor
 from visibility import mask_low_visibility, load_config
 from filters import OneEuroFilter
 from angles import angle
 from angles_world import mask_world_like
 from calibration import load_params, apply_calibration
-from gap_fill import fill_gaps
+from vision.gap_fill import fill_gaps
 from vision.overlay import JOINTS, draw_angle, draw_skeleton, put_big_text
 from exercise_state import ElbowFSM, ShoulderFSM, save_session
 
@@ -114,7 +111,7 @@ def main():
 
     # ── scorer ──────────────────────────────────────────────────────
     scorer.load('template.json')
-    frame_height = args.height
+    frame_width, frame_height = size      # src.size() → (width, height)
     flex_thresh  = 55.0
 
     # ── feedback display state ──────────────────────────────────────
@@ -127,7 +124,8 @@ def main():
         flex_thresh = fsm.FLEX_THRESH
         scorer.score_rep(rep,
                          frame_height=frame_height,
-                         calibrated_flex_thresh=flex_thresh)
+                         calibrated_flex_thresh=flex_thresh,
+                         frame_width=frame_width)
         print(f"  Rep {rep['rep_number']:2d} | "
               f"ROM {rep['rom']:.0f}°  "
               f"(max {rep['max_angle']:.0f}° → min {rep['min_angle']:.0f}°)  "
@@ -238,7 +236,7 @@ def main():
                 _announced_count = True
 
             # FSM only runs here — not during READY or CALIB
-            state, _ = fsm.update(ang, timestamp)
+            state, _ = fsm.update(ang, timestamp, landmarks=clean)
 
             if not args.no_overlay:
                 put_big_text(frame, f"Reps: {fsm.rep_count}",
