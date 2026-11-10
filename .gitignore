@@ -17,3 +17,4 @@ data/fit3d/
 data/calib_pairs_fit3d.npz
 data/calib_pairs_all.npz
 data/population_curve_fit3d.json
+fit3d dataset
