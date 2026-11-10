@@ -23,7 +23,7 @@ from calibration import load_params, apply_calibration, calibration_warnings
 from vision.gap_fill import fill_gaps
 from vision.overlay import JOINTS, draw_angle, draw_skeleton, put_big_text
 from exercise_state import ElbowFSM, ShoulderFSM, save_session
-
+from session_packager import post_session, flush_queue, push_live_frame
 
 WINDOW = 15            # recent frames kept for gap filling (about 0.5 s)
 SPIKE_WINDOW = 5       # median of the last 5 angles removes one-frame spikes
@@ -103,6 +103,7 @@ def main():
     ap.add_argument("--no-overlay",  action="store_true")
     ap.add_argument("--session-out", default="session_log.json",
                     help="where to save the session, e.g. data/healthy/p01.json")
+    ap.add_argument("--patient-id", type=int, default=1, help="patient DB id for session upload")
     args = ap.parse_args()
 
     cfg          = load_config()
@@ -251,6 +252,7 @@ def main():
 
             # FSM only runs here — not during READY or CALIB
             state, _ = fsm.update(ang, timestamp, landmarks=clean)
+            push_live_frame(state, ang, fsm.rep_count, timestamp)
 
             if not args.no_overlay:
                 put_big_text(frame, f"Reps: {fsm.rep_count}",
@@ -312,7 +314,10 @@ def main():
         cv2.waitKey(3000)
 
         os.makedirs(os.path.dirname(args.session_out) or ".", exist_ok=True)
-        save_session(fsm, exercise_name, path=args.session_out)
+        session = save_session(fsm, exercise_name, path=args.session_out)
+        flush_queue()
+        post_session(session, patient_id=args.patient_id)
+
     else:
         print("\nNo reps recorded.")
 
