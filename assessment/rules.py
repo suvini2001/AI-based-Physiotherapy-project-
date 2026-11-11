@@ -13,9 +13,16 @@ ELEV_THRESHOLD = 0.03   # shoulder rises > 3% of frame height = fault (Pavlikov:
 LEAN_THRESHOLD = 10.0   # trunk leans > 10 degrees = fault (Pavlikov: 0.090 rad = 5.2 deg)
 ASYM_THRESHOLD = 0.04   # shoulder height difference > 4% of frame = fault (Pavlikov: arm-angle diff >= 13.2 deg)
 
-# ROM tolerance — how many degrees above calibrated FLEX_THRESH
-# before flagging incomplete flexion
+# ROM tolerance — how many degrees short of the patient's own full range
+# (measured in the CALIB phase) a rep may stop before it is flagged
 ROM_TOLERANCE  = 10.0
+
+ROM_FAULT = {
+    "flex":  'Incomplete flexion — try to bend your elbow a little further',
+    "raise": 'Raise your arm a little higher',
+    "extend": 'Incomplete extension — straighten your arm fully between reps',
+    "lower": 'Lower your arm fully between reps',
+}
 
 
 def _landmark_array(lm):
@@ -33,6 +40,51 @@ def _landmark_array(lm):
     except Exception:
         return None
     return None
+
+
+PROFILE_RATIO = 0.35    # shoulder width / torso length below this = side-on to the camera
+
+
+def _near_shoulder_if_profile(lm, frame_height=480.0, frame_width=640.0):
+    """
+    Decide whether the person is side-on to the camera during this rep.
+
+    Front view  -> returns None (both shoulders are usable).
+    Side view   -> returns 11 or 12, the shoulder nearer the camera. The far
+                   shoulder is hidden behind the body, so its position is a guess
+                   and must not be used.
+    """
+    def usable(idx):
+        return int(np.count_nonzero(np.isfinite(lm[:, idx, :2]).all(axis=1))) >= 3
+
+    left_ok, right_ok = usable(11), usable(12)
+    if left_ok != right_ok:                    # one shoulder already masked out
+        return 11 if left_ok else 12
+    if not left_ok:                            # neither is usable
+        return None
+
+    is_pixel = bool(np.nanmedian(lm[:, [11, 12], 1]) > 1.0)
+    sx = 1.0 if is_pixel else float(frame_width or 640.0)
+    sy = 1.0 if is_pixel else float(frame_height or 480.0)
+
+    width = np.nanmedian(np.abs(lm[:, 11, 0] - lm[:, 12, 0])) * sx
+    torso = []
+    for sho, hip in ((11, 23), (12, 24)):
+        d = np.hypot((lm[:, sho, 0] - lm[:, hip, 0]) * sx,
+                     (lm[:, sho, 1] - lm[:, hip, 1]) * sy)
+        if np.isfinite(d).any():
+            torso.append(np.nanmedian(d))
+    if not torso or not np.isfinite(width) or max(torso) <= 0:
+        return None
+    if width / max(torso) >= PROFILE_RATIO:
+        return None                            # front view
+
+    # side view: MediaPipe z is smaller for points nearer the camera
+    if lm.shape[2] >= 3:
+        z_l, z_r = np.nanmedian(lm[:, 11, 2]), np.nanmedian(lm[:, 12, 2])
+        if np.isfinite(z_l) and np.isfinite(z_r):
+            return 11 if z_l < z_r else 12
+    return 12
 
 
 def check_rom(rep, rom_params):
@@ -58,13 +110,13 @@ def check_rom(rep, rom_params):
         if min_angle is None or not np.isfinite(min_angle):
             return None
         if min_angle > target + ROM_TOLERANCE:
-            return 'Incomplete flexion — try to bend your elbow a little further'
+            return ROM_FAULT["flex"]
     else:                       # shoulder: high enough?
         max_angle = rep.get('max_angle')
         if max_angle is None or not np.isfinite(max_angle):
             return None
         if max_angle < target - ROM_TOLERANCE:
-            return 'Raise your arm a little higher'
+            return ROM_FAULT["raise"]
     return 'ok'
 
 
@@ -81,10 +133,11 @@ def check_speed(rep):
     return 'ok'
 
 
-def check_shoulder_elevation(rep, frame_height=480.0):
+def check_shoulder_elevation(rep, frame_height=480.0, frame_width=640.0):
     """
-    Shoulder rises during the rep (checks both shoulders).
+    Shoulder rises during the rep.
     Landmark 11 = Left shoulder, Landmark 12 = Right shoulder.
+    Front view: checks both shoulders. Side view: checks only the near shoulder.
     Baseline = median of first 3 finite frames.
     Evaluates 90th percentile of shoulder rise across valid frames.
     Returns 'ok', fault string, or None if insufficient data.
@@ -93,96 +146,82 @@ def check_shoulder_elevation(rep, frame_height=480.0):
     if lm is None:
         return None
 
-    y_r = lm[:, 12, 1]
-    y_l = lm[:, 11, 1]
+    near = _near_shoulder_if_profile(lm, frame_height, frame_width)
+    shoulders = [near] if near is not None else [11, 12]
 
-    finite_r = y_r[np.isfinite(y_r)]
-    finite_l = y_l[np.isfinite(y_l)]
+    rises = []
+    for idx in shoulders:
+        y = lm[:, idx, 1]
+        finite = y[np.isfinite(y)]
+        if len(finite) < 3:
+            return None
+        # Detect if landmarks are pixel coordinates or normalized (0-1)
+        scale = float(frame_height) if np.nanmedian(finite) > 1.0 else 1.0
+        base = float(np.median(finite[:3]))
+        # Rise = baseline - y (image Y increases downwards)
+        rises.append(float(np.percentile((base - finite) / scale, 90)))
 
-    if len(finite_r) < 3 or len(finite_l) < 3:
-        return None
-
-    # Detect if landmarks are pixel coordinates or normalized (0-1)
-    is_pixel = bool(np.nanmedian(finite_r) > 1.0 or np.nanmedian(finite_l) > 1.0)
-    scale = float(frame_height) if is_pixel else 1.0
-
-    base_r = float(np.median(finite_r[:3]))
-    base_l = float(np.median(finite_l[:3]))
-
-    # Rise = baseline - y (image Y increases downwards)
-    rise_r = (base_r - finite_r) / scale
-    rise_l = (base_l - finite_l) / scale
-
-    # 90th percentile of rise across valid frames
-    p90_r = float(np.percentile(rise_r, 90))
-    p90_l = float(np.percentile(rise_l, 90))
-    max_rise = max(p90_r, p90_l)
-
-    if max_rise > ELEV_THRESHOLD:
+    if max(rises) > ELEV_THRESHOLD:
         return 'Keep your shoulder down'
     return 'ok'
 
 
 def check_trunk_lean(rep, frame_height=480.0, frame_width=640.0):
     """
-    Torso leans sideways during the rep.
-    Uses hip midpoint -> shoulder midpoint vector angle from vertical in pixel space.
-    Evaluates 90th percentile of lean angles across valid frames.
+    Torso leans during the rep.
+    Front view: hip midpoint -> shoulder midpoint, detects leaning sideways.
+    Side view:  near hip -> near shoulder, detects leaning forward or back.
+    Angle from vertical in pixel space, 90th percentile across valid frames.
     Returns 'ok', fault string, or None if insufficient data.
     """
     lm = _landmark_array(rep.get('_landmarks'))
     if lm is None:
         return None
 
-    lsho = lm[:, 11, :2]
-    rsho = lm[:, 12, :2]
-    lhip = lm[:, 23, :2]
-    rhip = lm[:, 24, :2]
+    near = _near_shoulder_if_profile(lm, frame_height, frame_width)
+    if near is not None:
+        sho = lm[:, near, :2]
+        hip = lm[:, near + 12, :2]             # 11 -> 23, 12 -> 24
+        message = 'Keep your back straight — you are leaning forward or back'
+    else:
+        sho = (lm[:, 11, :2] + lm[:, 12, :2]) / 2.0
+        hip = (lm[:, 23, :2] + lm[:, 24, :2]) / 2.0
+        message = 'Keep your back straight — you are leaning sideways'
 
-    valid_mask = (
-        np.isfinite(lsho).all(axis=1) &
-        np.isfinite(rsho).all(axis=1) &
-        np.isfinite(lhip).all(axis=1) &
-        np.isfinite(rhip).all(axis=1)
-    )
+    valid_mask = np.isfinite(sho).all(axis=1) & np.isfinite(hip).all(axis=1)
     if np.count_nonzero(valid_mask) < 3:
         return None
+    sho, hip = sho[valid_mask], hip[valid_mask]
 
-    lsho_v = lsho[valid_mask]
-    rsho_v = rsho[valid_mask]
-    lhip_v = lhip[valid_mask]
-    rhip_v = rhip[valid_mask]
-
-    is_pixel = bool(np.nanmedian(rsho_v[:, 1]) > 1.0 or np.nanmedian(lsho_v[:, 1]) > 1.0)
+    is_pixel = bool(np.nanmedian(sho[:, 1]) > 1.0)
     sx = 1.0 if is_pixel else float(frame_width if frame_width else 640.0)
     sy = 1.0 if is_pixel else float(frame_height if frame_height else 480.0)
 
-    mid_hip_x = ((lhip_v[:, 0] + rhip_v[:, 0]) / 2.0) * sx
-    mid_hip_y = ((lhip_v[:, 1] + rhip_v[:, 1]) / 2.0) * sy
-    mid_sho_x = ((lsho_v[:, 0] + rsho_v[:, 0]) / 2.0) * sx
-    mid_sho_y = ((lsho_v[:, 1] + rsho_v[:, 1]) / 2.0) * sy
-
-    dx = mid_sho_x - mid_hip_x
-    dy = mid_sho_y - mid_hip_y
+    dx = (sho[:, 0] - hip[:, 0]) * sx
+    dy = (sho[:, 1] - hip[:, 1]) * sy
 
     # Image Y increases downwards, so -dy points upward towards shoulders
     leans = np.abs(np.degrees(np.arctan2(dx, -dy)))
     peak_lean = float(np.percentile(leans, 90))
 
     if peak_lean > LEAN_THRESHOLD:
-        return 'Keep your back straight — you are leaning sideways'
+        return message
     return 'ok'
 
 
-def check_asymmetry(rep, frame_height=480.0):
+def check_asymmetry(rep, frame_height=480.0, frame_width=640.0):
     """
     Left and right shoulders at different heights (one shrugged).
+    Skipped in side view, where the far shoulder cannot be seen.
     Evaluates 90th percentile of shoulder height differences across valid frames.
     Returns 'ok', fault string, or None if insufficient data.
     """
     lm = _landmark_array(rep.get('_landmarks'))
     if lm is None:
         return None
+
+    if _near_shoulder_if_profile(lm, frame_height, frame_width) is not None:
+        return None                            # side view: cannot compare shoulders
 
     y_l = lm[:, 11, 1]
     y_r = lm[:, 12, 1]
@@ -222,9 +261,9 @@ def run_checks(rep, frame_height=480.0, rom_params=None, frame_width=640.0, cali
     named_checks = [
         ("rom", lambda r: check_rom(r, rom_params)),
         ("speed", check_speed),
-        ("shoulder_elevation", lambda r: check_shoulder_elevation(r, frame_height)),
+        ("shoulder_elevation", lambda r: check_shoulder_elevation(r, frame_height, frame_width)),
         ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
-        ("asymmetry", lambda r: check_asymmetry(r, frame_height)),
+        ("asymmetry", lambda r: check_asymmetry(r, frame_height, frame_width)),
     ]
     faults = []
     n_checked = 0

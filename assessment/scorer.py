@@ -98,13 +98,26 @@ def score_rep(rep_dict, frame_height=480.0, rom_params=None, frame_width=640.0,
     return rep_dict
 
 
-def session_summary(reps):
-    """Compute end-of-session statistics."""
-    if not reps:
+def session_summary(reps, incomplete_attempts=None):
+    """
+    Compute end-of-session statistics.
+
+    incomplete_attempts: movements that turned back before the rep threshold
+    (fsm.incomplete_attempts). Each one counts as an attempt with quality 0,
+    so a session of mostly shallow movements cannot get a high grade.
+    """
+    reps       = reps or []
+    incomplete = incomplete_attempts or []
+    if not reps and not incomplete:
         return {}
     scores     = [r['quality_score'] for r in reps
                   if r.get('quality_score') is not None]
+    scores    += [0.0] * len(incomplete)
     all_faults = [f for r in reps for f in r.get('faults', [])]
+    for a in incomplete:
+        kind = a.get('reason') or (
+            "raise" if "shoulder" in str(a.get('exercise', '')) else "flex")
+        all_faults.append(_rules.ROM_FAULT[kind])
     mean_q     = round(sum(scores) / len(scores), 1) if scores else 0.0
     grade      = ('A' if mean_q >= 85 else
                   'B' if mean_q >= 70 else
@@ -118,4 +131,6 @@ def session_summary(reps):
         'n_reps':       len(reps),
         'n_clean_reps': sum(1 for r in reps
                            if not r.get('faults')),
+        'n_incomplete': len(incomplete),
+        'n_attempts':   len(reps) + len(incomplete),
     }

@@ -4,6 +4,7 @@ __pycache__/
 data/*.mp4
 dataset
 results
+node_modules/
 
 # Participant & volunteer session recordings (privacy & research ethics)
 session_log.json
