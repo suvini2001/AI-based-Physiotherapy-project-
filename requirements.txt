@@ -10,3 +10,6 @@ pyyaml>=6.0
 pandas>=2.0.0
 fastdtw>=0.3.4
 pyttsx3>=2.90
+mlflow==3.18.0
+mlflow-skinny==3.18.0
+mlflow-tracing==3.18.0

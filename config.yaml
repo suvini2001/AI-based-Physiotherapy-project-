@@ -17,7 +17,7 @@ bone_gate:
 
 # A7 – calibration screen
 calibration:
-  countdown_seconds: 3.0
+  countdown_seconds: 10.0
   hold_seconds: 3.0
   expected_straight_deg: 175.0
   straight_tolerance_deg: 15.0
