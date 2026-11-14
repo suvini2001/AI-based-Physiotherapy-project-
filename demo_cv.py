@@ -75,10 +75,10 @@ class AnglePipeline:
 
     def step(self, norm, world, fps=None):
         """norm, world: (33, 4) for one frame. Returns (clean_norm, angle_or_None).
-        ml = self.iml.step(norm, world) if self.iml is not None else None
         fps: the real frame rate right now (live camera). The smoothing is tuned in
         seconds, so if it is told 30 FPS while frames arrive at 7 it flattens the
         top and bottom of every rep."""
+        ml = self.iml.step(norm, world) if self.iml is not None else None
         if fps:
             self.smoother.fs = float(fps)
         masked = mask_low_visibility(norm[None], self.thr)[0]

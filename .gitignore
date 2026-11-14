@@ -22,3 +22,4 @@ fit3d dataset
 mlflow.db
 mlruns/
 mlartifacts/
+.venv-mlflow/
