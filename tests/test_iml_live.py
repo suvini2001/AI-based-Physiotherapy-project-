@@ -98,3 +98,50 @@ def test_stream_features_match_the_live_stream(model):
     for n, w in zip(lm, wd):
         s.step(n, w)
     assert np.allclose(rows[-1], s.last_features, equal_nan=True)
+
+
+@pytest.mark.parametrize("scale", ["shoulder", "torso"])
+def test_expanding_stream_uses_only_past_frames(scale):
+    lm, wd = synthetic(n=400, seed=5)
+    a = stream_features(lm, wd, "right", (640, 480), 30.0, session="expanding", scale=scale)
+    lm2 = lm.copy(); lm2[330:, 16, :2] += 0.05
+    b = stream_features(lm2, wd, "right", (640, 480), 30.0, session="expanding", scale=scale)
+    assert np.allclose(a[:330], b[:330], equal_nan=True)
+
+
+def test_expanding_keeps_bone_length_after_the_window_forgets():
+    """An arm seen straight only in the first seconds keeps its true length in
+    'expanding' mode, but is forgotten by the 300-frame window."""
+    from iml_live import FeatureStream, IDX
+    lm, wd = synthetic(n=700, seed=6)
+    lm[60:, 16, :2] = lm[60:, 14, :2] + (lm[60:, 16, :2] - lm[60:, 14, :2]) * 0.5   # forearm looks short later
+    rows = {s: stream_features(lm, wd, "right", (640, 480), 30.0, session=s)
+            for s in ("window", "expanding")}
+    i = IDX["plan_fore"]
+    assert np.nanmedian(rows["expanding"][-50:, i]) < 0.7          # still knows the arm is longer
+    assert np.nanmedian(rows["window"][-50:, i]) > 0.9             # window has forgotten
+
+
+def test_torso_scale_falls_back_to_shoulders_without_hips():
+    from iml_live import FeatureStream
+    lm, wd = synthetic(n=60, seed=7)
+    lm[:, 23:25, 3] = 0.1                                           # hips not visible
+    fs = FeatureStream("right", (640, 480), 30.0, session="expanding", scale="torso")
+    for n, w in zip(lm, wd):
+        fs.push(n, w)
+    assert fs.scale_used == "shoulder"
+    lm2, wd2 = synthetic(n=60, seed=7)
+    fs2 = FeatureStream("right", (640, 480), 30.0, session="expanding", scale="torso")
+    for n, w in zip(lm2, wd2):
+        fs2.push(n, w)
+    assert fs2.scale_used == "torso"
+
+
+def test_model_meta_selects_the_feature_stream(tmp_path, model):
+    m = tmp_path / "exp.txt"
+    m.write_text(open(model).read())
+    json.dump({"features": KEEP, "feature_stream": {"session": "expanding", "scale": "torso"}},
+              open(str(m) + ".json", "w"))
+    s = IMLStream(str(m), "right", (640, 480), 30.0)
+    assert (s.fs.session, s.fs.scale) == ("expanding", "torso")
+    assert (IMLStream(model).fs.session, IMLStream(model).fs.scale) == ("window", "shoulder")

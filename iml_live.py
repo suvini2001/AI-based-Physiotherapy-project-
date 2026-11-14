@@ -28,7 +28,7 @@ from scipy.signal import butter, lfilter, lfilter_zi
 
 import angles as angles_2d
 from angles import elbow_angle_3d_ordered
-from angles_lift import bone_lengths, elbow_angle_lifted
+from angles_lift import ARM, bone_lengths, elbow_angle_lifted, shoulder_width
 from angles_world import mask_world_like
 from visibility import mask_low_visibility
 from features import frame_features, FEATURE_NAMES
@@ -64,41 +64,111 @@ def load_model(path):
     return lgb.Booster(model_file=path), meta
 
 
+IDX = {n: i for i, n in enumerate(FEATURE_NAMES)}
+L_SH, R_SH, L_HIP, R_HIP = 11, 12, 23, 24
+
+
 class FeatureStream:
     """The 20 training features, built ONE FRAME AT A TIME from past frames only.
 
     This is the single place where live features are made: the webcam path
     (IMLStream) and the training replay (stream_features) both use it, so the
-    model is trained on exactly what it is later served."""
+    model is trained on exactly what it is later served.
 
-    def __init__(self, side="right", size=(640, 480), fps=30.0, threshold=0.70, buffer=300):
+    session  'window'    bone lengths and scale from the last `buffer` frames
+                         (the original version; frames older than ~10 s are forgotten)
+             'expanding' bone lengths and scale from EVERY frame since the session
+                         started (only a few numbers per frame are kept, so it stays fast);
+                         no calibration pose is needed, which suits injured patients
+    scale    'shoulder'  lengths in shoulder widths (the original unit)
+             'torso'     lengths in torso lengths, mid-shoulder to mid-hip, as in
+                         pose_normalise.py; falls back to shoulder width until the hips
+                         have been seen in `min_frames` frames (e.g. sitting close to a laptop)
+    """
+
+    def __init__(self, side="right", size=(640, 480), fps=30.0, threshold=0.70, buffer=300,
+                 session="window", scale="shoulder", min_frames=30, pct=95.0):
+        if session not in ("window", "expanding") or scale not in ("shoulder", "torso"):
+            raise ValueError(f"unknown session={session!r} / scale={scale!r}")
+        if session == "window" and scale != "shoulder":
+            raise ValueError("scale='torso' needs session='expanding'")
         self.side, self.size, self.thr = side, tuple(size), threshold
+        self.session, self.scale, self.min_frames, self.pct = session, scale, min_frames, pct
         self.lm, self.wd = deque(maxlen=buffer), deque(maxlen=buffer)
         self.a2, self.aw, self.al = (deque(maxlen=buffer) for _ in range(3))
         self.f2, self.fw, self.fl = CausalButter(fps), CausalButter(fps), CausalButter(fps)
+        # session history: four numbers per frame, in pixels, kept for the whole session
+        self.h_up, self.h_fo, self.h_sw, self.h_torso = [], [], [], []
+        self.scale_used = None              # 'torso' or 'shoulder' for the last frame
 
     def __len__(self):
         return len(self.lm)
+
+    def _measure(self, m):
+        """upper arm, forearm, shoulder width and torso length of one frame, in pixels"""
+        w, h = self.size
+        sh, el, wr = ARM[self.side]
+        px = lambda a, b: float(np.hypot((m[a, 0] - m[b, 0]) * w, (m[a, 1] - m[b, 1]) * h))
+        mid_sh = (m[L_SH, :2] + m[R_SH, :2]) / 2
+        mid_hip = (m[L_HIP, :2] + m[R_HIP, :2]) / 2
+        torso = float(np.hypot((mid_sh[0] - mid_hip[0]) * w, (mid_sh[1] - mid_hip[1]) * h))
+        return px(sh, el), px(wr, el), px(L_SH, R_SH), torso
+
+    def _session_stats(self):
+        """true bone lengths (pixels) = high percentile of everything seen so far; scale = median"""
+        def pct(h):
+            v = np.asarray(h, float); v = v[np.isfinite(v) & (v > 0)]
+            return float(np.percentile(v, self.pct)) if len(v) >= self.min_frames else np.nan
+        def med(h, need):
+            v = np.asarray(h, float); v = v[np.isfinite(v) & (v > 0)]
+            return float(np.median(v)) if len(v) >= need else np.nan
+        Lup, Lfo = pct(self.h_up), pct(self.h_fo)
+        sc, used = np.nan, None
+        if self.scale == "torso":
+            sc = med(self.h_torso, self.min_frames); used = "torso"
+        if not np.isfinite(sc):
+            sc = med(self.h_sw, 1); used = "shoulder"
+        return Lup, Lfo, sc, used
 
     def push(self, norm, world):
         m = mask_low_visibility(np.asarray(norm, float)[None], self.thr)[0]
         w = mask_world_like(np.asarray(world, float)[None], m[None])[0]
         self.lm.append(m); self.wd.append(w)
         L, W = np.stack(self.lm), np.stack(self.wd)
-        L_up, L_fo = bone_lengths(L, self.side, self.size)
+        if self.session == "expanding":
+            up, fo, sw, torso = self._measure(m)
+            for hist, v in ((self.h_up, up), (self.h_fo, fo), (self.h_sw, sw), (self.h_torso, torso)):
+                hist.append(v)
+            Lup_px, Lfo_px, sc, self.scale_used = self._session_stats()
+            # the lift and frame_features measure lengths in the buffer's median shoulder
+            # width; hand them the session bone lengths in that same unit so the scale
+            # cancels and only the session estimate of the true length matters
+            sw_buf = float(np.nanmedian(shoulder_width(L, self.size)))
+            L_up, L_fo = ((Lup_px / sw_buf, Lfo_px / sw_buf) if np.isfinite(sw_buf) and sw_buf > 0
+                          else (np.nan, np.nan))
+        else:
+            L_up, L_fo = bone_lengths(L, self.side, self.size)
         a2 = float(angles_2d.elbow_angle(L[-1:], side=self.side, size=self.size)[0])
         aw = float(elbow_angle_3d_ordered(W[-1:], side=self.side)[0])
         al = float(elbow_angle_lifted(L, W, self.side, self.size, L_up, L_fo)[-1])
         self.a2.append(self.f2(a2)); self.aw.append(self.fw(aw)); self.al.append(self.fl(al))
         row = frame_features(L, W, self.side, self.size, L_up, L_fo,
                              np.array(self.a2), np.array(self.aw), np.array(self.al))[-1]
+        if self.session == "expanding":
+            # length features from the session estimates, in the chosen unit
+            with np.errstate(invalid="ignore", divide="ignore"):
+                row[IDX["len_upper"]], row[IDX["len_fore"]] = up / sc, fo / sc
+                row[IDX["bone_upper"]], row[IDX["bone_fore"]] = Lup_px / sc, Lfo_px / sc
+                row[IDX["plan_upper"]], row[IDX["plan_fore"]] = up / Lup_px, fo / Lfo_px
+            row[IDX["plan_min"]] = np.fmin(row[IDX["plan_upper"]], row[IDX["plan_fore"]])
         return row
 
 
-def stream_features(lm, world, side, size, fps, threshold=0.70, buffer=300):
+def stream_features(lm, world, side, size, fps, threshold=0.70, buffer=300,
+                    session="window", scale="shoulder"):
     """Replay a recorded clip frame by frame, exactly as the webcam would deliver it.
     Returns (n_frames, 20): row i uses frames 0..i only."""
-    fs = FeatureStream(side, size, fps, threshold, buffer)
+    fs = FeatureStream(side, size, fps, threshold, buffer, session=session, scale=scale)
     return np.stack([fs.push(n, w) for n, w in zip(lm, world)]).astype(np.float32)
 
 
@@ -110,7 +180,10 @@ class IMLStream:
         self.booster, self.meta = load_model(model_path)
         self.cols = [FEATURE_NAMES.index(f) for f in self.meta["features"]]
         self.min_frames = min_frames
-        self.fs = FeatureStream(side, size, fps, threshold, buffer)
+        mode = self.meta.get("feature_stream", {})          # models trained before Phase 4A: window
+        self.fs = FeatureStream(side, size, fps, threshold, buffer,
+                                session=mode.get("session", "window"),
+                                scale=mode.get("scale", "shoulder"))
         self.last_features = None
 
     @property
