@@ -13,7 +13,7 @@
 |---|---|---|---|
 | - | Data formats and sample files | Done | `Formats.md`, `data/sample_*` |
 | 1.1 | Camera check (resolution, real FPS) | Done | `camera_check.py` |
-| 1.2 | Capture loop, FPS counter, record and replay | Done | `capture/camera.py`, `capture/recoder.py` |
+| 1.2 | Capture loop, FPS counter, record and replay | Done | `capture/camera.py`, `capture/recorder.py` |
 | 1.3 | Pose extractor (33 landmarks) and first landmark file | Done | `pose/landmarks.py`, `extract_clip.py` |
 | - | Landmark overlay check | Done | `draw_check.py` |
 | 1.4 | Visibility mask and threshold test | Done | `visibility.py`, `config.yaml` |

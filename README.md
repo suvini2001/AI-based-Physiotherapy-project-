@@ -80,7 +80,8 @@ Participant recordings are git-ignored. See `data/README.md` for dataset licence
 
 ## Status and known limits
 
-- Calibration curve: REHAB24-6 profile data covers truth angles 64–175°; below 64° the curve is extrapolated. To be extended with Fit3D biceps curls and checked with a goniometer on our own setup.
+- Angle: I_ML (exp_torso) is the default; side-on LOSO error 11.5° vs 15.8° for the curve, 4.4° per-person gain (13/16 recordings, p = 0.051). On an unseen dataset the gain shrinks (REHAB24-6 → Fit3D), so it still has to be confirmed with a goniometer on our own webcam.
+- Fallback curve: camera-relative side-on REHAB24-6 data covers truth angles 49–173°; below 49° it is extrapolated. Fit3D has no side-on camera, so it could not extend this range.
 - DTW templates and rule thresholds still need real recordings.
 - Benchmark notebooks: `benchmark_3d_world.ipynb` (angle variants, learned correction), `rehab24_validation_v4.ipynb`.
 
