@@ -180,8 +180,9 @@ def main():
                                  iml_model=args.iml_model)
 
     # ── scorer ──────────────────────────────────────────────────────
-    exercise_name = ("elbow_flexion" if args.exercise == "elbow"
-                     else "shoulder_abduction")
+    exercise_name = ("elbow_flexion_left" if args.exercise == "elbow" and args.side == "left"
+            else "elbow_flexion" if args.exercise == "elbow"
+            else f"shoulder_{args.exercise.replace('shoulder_', '')}")
     template_path = os.path.join("templates", f"{exercise_name}.json")
     if not os.path.exists(template_path):
         template_path = "template.json"

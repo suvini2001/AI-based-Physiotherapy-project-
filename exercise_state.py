@@ -127,6 +127,7 @@ class ElbowFSM:
     EXTEND_THRESH = 145.0   # angle above this = arm extended
     FLEX_THRESH   =  55.0   # angle below this = arm fully flexed
     MIN_DELTA     =   2.0   # deg/frame minimum to confirm movement direction
+    DIRECTION_WINDOW_S = 0.3   # seconds to measure direction over (replaces per-frame)
     ROM_TARGET    = None    # deepest flexion the patient has shown; None = not known yet
     START_TARGET  = None    # fullest extension the patient has shown
 
@@ -140,6 +141,7 @@ class ElbowFSM:
         """
         self.state        = "EXTENDED"
         self.prev_angle   = None
+        self._angle_buffer = []   # (timestamp, angle) pairs for direction window
         self.rep_count    = 0
         self.rep_callback = rep_callback
 
@@ -236,8 +238,15 @@ class ElbowFSM:
             return self.state, False
 
         frame_lm = _frame_landmarks(landmarks)
-        direction = (angle_deg - self.prev_angle
-                     if self.prev_angle is not None else 0.0)
+        # time-based direction: change over last DIRECTION_WINDOW_S seconds
+        self._angle_buffer.append((timestamp_s, angle_deg))
+        # keep only the last DIRECTION_WINDOW_S seconds
+        cutoff = timestamp_s - self.DIRECTION_WINDOW_S
+        self._angle_buffer = [(t, a) for t, a in self._angle_buffer if t >= cutoff]
+        if len(self._angle_buffer) >= 2:
+            direction = self._angle_buffer[-1][1] - self._angle_buffer[0][1]
+        else:
+            direction = 0.0
         self._rep_angles.append(angle_deg)
         self._rep_landmarks.append(frame_lm)
         rep_completed = False
