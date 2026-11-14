@@ -1,12 +1,13 @@
 """demo_cv.py - webcam or clip -> landmarks -> clean -> angle -> overlay.
-  python demo_cv.py --exercise elbow --side right          (live webcam, variant A = old 2D angle)
+  python demo_cv.py --exercise elbow --side right          (live webcam, angle method from config.yaml: I_ML exp_torso)
+  python demo_cv.py --variant A                             (old 2D angle + calibration curve)
   python demo_cv.py --variant B                             (3D angle from world landmarks)
   python demo_cv.py --calibration data/user_calibration.json
   python demo_cv.py --source data/elbow_A_laptop.mp4        (replay a clip)
   python demo_cv.py --variant ML                            (learned I_ML angle, curve as fallback)
   python demo_cv.py --no-overlay                            (FPS without drawing)
 Commit 1 (Person A): the loop, variants A and B, calibration. Commit 2 (Person B): yaw message, variant C, gate."""
-import argparse, os, sys, time
+import argparse, json, os, sys, time
 from collections import deque
 import cv2
 import numpy as np
@@ -44,6 +45,7 @@ class AnglePipeline:
         self.recent = deque(maxlen=SPIKE_WINDOW)
         self.smoother = OneEuroFilter(fs=fps)
         self.iml, self.last_source = None, None
+        self.source_counts = {"ML": 0, "curve": 0, "raw": 0}   # which method produced each angle
         if variant == "ML":
             from iml_live import IMLStream
             self.iml = IMLStream(iml_model, side=side, size=size, fps=fps, threshold=thr)
@@ -97,6 +99,7 @@ class AnglePipeline:
 
         if ml is not None:                      # I_ML has its own causal filter; no curve on top
             self.last_source = "ML"
+            self.source_counts["ML"] += 1
             if raw is not None:
                 self.recent.append(raw)         # keep the fallback filters warm
             return clean, ml
@@ -110,7 +113,23 @@ class AnglePipeline:
         if self.calibration is not None:
             ang = float(apply_calibration(ang, self.calibration))
         self.last_source = "curve" if self.calibration is not None else "raw"
+        self.source_counts[self.last_source] += 1
         return clean, ang
+
+
+def resolve_angle_method(variant, iml_model, calibration, angle_cfg):
+    """Command-line values win; otherwise config.yaml `angle:` decides.
+    A missing I_ML model never stops a session: it falls back to variant A + curve."""
+    angle_cfg = angle_cfg or {}
+    variant = variant or angle_cfg.get("method", "A")
+    iml_model = iml_model or angle_cfg.get("iml_model", "data/iml_nolook_rehab24_exp_torso.txt")
+    if variant == "ML" and calibration is None:
+        fb = angle_cfg.get("fallback_calibration")
+        calibration = fb if fb and os.path.exists(fb) else None
+    if variant == "ML" and not (os.path.exists(iml_model) and os.path.exists(iml_model + ".json")):
+        print(f"WARNING: I_ML model {iml_model} (+ .json) not found - using variant A + curve instead")
+        variant = "A"
+    return variant, iml_model, calibration
 
 
 def main():
@@ -118,10 +137,12 @@ def main():
     ap.add_argument("--source",      default="0")
     ap.add_argument("--exercise",    choices=list(JOINTS.keys()), default="elbow")
     ap.add_argument("--side",        choices=["left", "right"],   default="right")
-    ap.add_argument("--variant",     choices=VARIANTS,            default="A")
-    ap.add_argument("--calibration", default=None)
-    ap.add_argument("--iml-model",   default="data/iml_nolook_rehab24.txt",
-                    help="LightGBM model for --variant ML")
+    ap.add_argument("--variant",     choices=VARIANTS,            default=None,
+                    help="angle method; default from config.yaml (angle.method)")
+    ap.add_argument("--calibration", default=None,
+                    help="curve file; with --variant ML it is the fallback (default from config.yaml)")
+    ap.add_argument("--iml-model",   default=None,
+                    help="LightGBM model for --variant ML (default from config.yaml)")
     ap.add_argument("--width",       type=int, default=640)
     ap.add_argument("--height",      type=int, default=480)
     ap.add_argument("--mirror",      action="store_true")
@@ -132,9 +153,12 @@ def main():
 
     cfg          = load_config()
     thr, max_gap = cfg["visibility_threshold"], cfg["max_gap_frames"]
+    args.variant, args.iml_model, args.calibration = resolve_angle_method(
+        args.variant, args.iml_model, args.calibration, cfg.get("angle"))
     calibration  = load_params(args.calibration) if args.calibration else None
-    if args.variant == "ML" and not os.path.exists(args.iml_model):
-        raise SystemExit(f"--variant ML needs {args.iml_model} and {args.iml_model}.json")
+    if args.variant == "ML":
+        print(f"Angle: I_ML {os.path.basename(args.iml_model)}"
+              + (f", curve fallback {args.calibration}" if calibration else ", no curve fallback (raw 2D for the first ~1 s)"))
     for line in calibration_warnings(calibration, "A" if args.variant == "ML" else args.variant):
         print("WARNING:", line)
     source       = int(args.source) if args.source.isdigit() else args.source
@@ -323,8 +347,9 @@ def main():
             showing = _feedback_rep and time.perf_counter() < _feedback_timer
             draw_hud(frame, {
                 "title": (f"{exercise_name.replace('_', ' ').upper()}  |  "
-                          f"{args.side.upper()} ARM  |  {args.variant}"
-                          + ("+cal" if calibration else "")),
+                          f"{args.side.upper()} ARM  |  "
+                          + (f"I_ML ({pipe.last_source or '...'})" if args.variant == "ML"
+                             else args.variant + ("+cal" if calibration else ""))),
                 "phase":       phase,
                 "remaining":   remaining,
                 "phase_total": READY_S if phase == "READY" else CALIBRATION_S,
@@ -371,7 +396,18 @@ def main():
         cv2.waitKey(5000)
 
         os.makedirs(os.path.dirname(args.session_out) or ".", exist_ok=True)
-        save_session(fsm, exercise_name, path=args.session_out)
+        session = save_session(fsm, exercise_name, path=args.session_out)
+        # record which angle method produced the numbers in this session
+        total = sum(pipe.source_counts.values()) or 1
+        session["angle_method"] = {
+            "variant": args.variant,
+            "iml_model": os.path.basename(args.iml_model) if args.variant == "ML" else None,
+            "feature_stream": (pipe.iml.meta.get("feature_stream", {"session": "window", "scale": "shoulder"})
+                               if pipe.iml is not None else None),
+            "share_of_frames": {k: round(v / total, 3) for k, v in pipe.source_counts.items()},
+        }
+        with open(args.session_out, "w") as f:
+            json.dump(session, f, indent=2)
     else:
         print("\nNo reps recorded.")
 

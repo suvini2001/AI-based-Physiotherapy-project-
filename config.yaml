@@ -23,3 +23,9 @@ calibration:
   straight_tolerance_deg: 15.0
   curve_file: data/population_curve.json
   out_file: data/user_calibration.json
+
+# Angle method used by demo_cv.py (Phase 4A decision, see 04b_expanding_compare.ipynb)
+angle:
+  method: ML                                          # ML = learned I_ML angle; A = 2D angle + curve
+  iml_model: data/iml_nolook_rehab24_exp_torso.txt   # expanding session stats, torso-length scale
+  fallback_calibration: data/user_calibration.json   # curve used for the first ~1 s and when features are missing
