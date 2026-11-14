@@ -3,6 +3,7 @@
   python demo_cv.py --variant B                             (3D angle from world landmarks)
   python demo_cv.py --calibration data/user_calibration.json
   python demo_cv.py --source data/elbow_A_laptop.mp4        (replay a clip)
+  python demo_cv.py --variant ML                            (learned I_ML angle, curve as fallback)
   python demo_cv.py --no-overlay                            (FPS without drawing)
 Commit 1 (Person A): the loop, variants A and B, calibration. Commit 2 (Person B): yaw message, variant C, gate."""
 import argparse, os, sys, time
@@ -27,7 +28,7 @@ from exercise_state import (ElbowFSM, ShoulderFSM, save_session,
 
 WINDOW = 15            # recent frames kept for gap filling (about 0.5 s)
 SPIKE_WINDOW = 5       # median of the last 5 angles removes one-frame spikes
-VARIANTS = ["A", "B", "C"]  # Person B adds "C" in the second commit
+VARIANTS = ["A", "B", "C", "ML"]  # ML = learned correction (iml_live.py), falls back to A + curve
 DISPLAY_W = 960        # the window is drawn at this width so text stays sharp
 WINDOW_TITLE = "Physio session (press Q to finish)"
 
@@ -35,18 +36,23 @@ WINDOW_TITLE = "Physio session (press Q to finish)"
 class AnglePipeline:
     """One frame in, one cleaned angle out. Separate from the window so it can be tested without a camera."""
 
-    def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None, side="right"):
+    def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None, side="right",
+                 iml_model=None):
         self.joint, self.variant, self.size, self.side = joint, variant, size, side
         self.thr, self.max_gap, self.calibration = thr, max_gap, calibration
         self.win_norm, self.win_world = deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.recent = deque(maxlen=SPIKE_WINDOW)
         self.smoother = OneEuroFilter(fs=fps)
+        self.iml, self.last_source = None, None
+        if variant == "ML":
+            from iml_live import IMLStream
+            self.iml = IMLStream(iml_model, side=side, size=size, fps=fps, threshold=thr)
 
     def raw_angle(self, clean_norm, clean_world):
         pts_n = [clean_norm[i] for i in self.joint]
         if any(np.isnan(p[:3]).any() for p in pts_n):
             return None
-        if self.variant == "A":                               # old way: 2D pixels
+        if self.variant in ("A", "ML"):                               # old way: 2D pixels
             px = [np.array([p[0] * self.size[0], p[1] * self.size[1]]) for p in pts_n]
             return float(angle(*px))
         if self.variant == "B":                               # 3D world landmarks, metres
@@ -67,6 +73,7 @@ class AnglePipeline:
 
     def step(self, norm, world, fps=None):
         """norm, world: (33, 4) for one frame. Returns (clean_norm, angle_or_None).
+        ml = self.iml.step(norm, world) if self.iml is not None else None
         fps: the real frame rate right now (live camera). The smoothing is tuned in
         seconds, so if it is told 30 FPS while frames arrive at 7 it flattens the
         top and bottom of every rep."""
@@ -88,6 +95,11 @@ class AnglePipeline:
             if not gate_val:
                 raw = None
 
+        if ml is not None:                      # I_ML has its own causal filter; no curve on top
+            self.last_source = "ML"
+            if raw is not None:
+                self.recent.append(raw)         # keep the fallback filters warm
+            return clean, ml
         if raw is None:
             return clean, None
         self.recent.append(raw)
@@ -97,6 +109,7 @@ class AnglePipeline:
         ang = min(max(ang, 0.0), 180.0)
         if self.calibration is not None:
             ang = float(apply_calibration(ang, self.calibration))
+        self.last_source = "curve" if self.calibration is not None else "raw"
         return clean, ang
 
 
@@ -107,6 +120,8 @@ def main():
     ap.add_argument("--side",        choices=["left", "right"],   default="right")
     ap.add_argument("--variant",     choices=VARIANTS,            default="A")
     ap.add_argument("--calibration", default=None)
+    ap.add_argument("--iml-model",   default="data/iml_nolook_rehab24.txt",
+                    help="LightGBM model for --variant ML")
     ap.add_argument("--width",       type=int, default=640)
     ap.add_argument("--height",      type=int, default=480)
     ap.add_argument("--mirror",      action="store_true")
@@ -118,7 +133,9 @@ def main():
     cfg          = load_config()
     thr, max_gap = cfg["visibility_threshold"], cfg["max_gap_frames"]
     calibration  = load_params(args.calibration) if args.calibration else None
-    for line in calibration_warnings(calibration, args.variant):
+    if args.variant == "ML" and not os.path.exists(args.iml_model):
+        raise SystemExit(f"--variant ML needs {args.iml_model} and {args.iml_model}.json")
+    for line in calibration_warnings(calibration, "A" if args.variant == "ML" else args.variant):
         print("WARNING:", line)
     source       = int(args.source) if args.source.isdigit() else args.source
     src          = FrameSource(source, args.width, args.height)
@@ -126,7 +143,8 @@ def main():
     extractor    = LandmarkExtractor()
     joint        = JOINTS[args.exercise][args.side]
     pipe         = AnglePipeline(joint, args.variant, size,
-                                 src.fps(), thr, max_gap, calibration, side=args.side)
+                                 src.fps(), thr, max_gap, calibration, side=args.side,
+                                 iml_model=args.iml_model)
 
     # ── scorer ──────────────────────────────────────────────────────
     exercise_name = ("elbow_flexion" if args.exercise == "elbow"
