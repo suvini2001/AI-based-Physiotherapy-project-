@@ -117,10 +117,19 @@ class AnglePipeline:
         return clean, ang
 
 
-def resolve_angle_method(variant, iml_model, calibration, angle_cfg):
+def resolve_angle_method(variant, iml_model, calibration, angle_cfg, exercise="elbow"):
     """Command-line values win; otherwise config.yaml `angle:` decides.
-    A missing I_ML model never stops a session: it falls back to variant A + curve."""
+    A missing I_ML model never stops a session: it falls back to variant A + curve.
+    I_ML and the population curve are ELBOW models: any other exercise uses the plain
+    2D angle of its own joint (variant A) with no curve."""
     angle_cfg = angle_cfg or {}
+    if exercise != "elbow":
+        if variant == "ML" or (variant is None and angle_cfg.get("method") == "ML"):
+            print(f"Angle: {exercise} uses the 2D angle (variant A); I_ML is trained for the elbow only")
+        variant = "A" if variant in (None, "ML") else variant
+        if calibration is not None:
+            print(f"WARNING: {calibration} is an elbow curve - not applied to {exercise}")
+        return variant, iml_model or angle_cfg.get("iml_model"), None
     variant = variant or angle_cfg.get("method", "A")
     iml_model = iml_model or angle_cfg.get("iml_model", "data/iml_nolook_rehab24_exp_torso.txt")
     if variant == "ML" and calibration is None:
@@ -154,7 +163,7 @@ def main():
     cfg          = load_config()
     thr, max_gap = cfg["visibility_threshold"], cfg["max_gap_frames"]
     args.variant, args.iml_model, args.calibration = resolve_angle_method(
-        args.variant, args.iml_model, args.calibration, cfg.get("angle"))
+        args.variant, args.iml_model, args.calibration, cfg.get("angle"), exercise=args.exercise)
     calibration  = load_params(args.calibration) if args.calibration else None
     if args.variant == "ML":
         print(f"Angle: I_ML {os.path.basename(args.iml_model)}"

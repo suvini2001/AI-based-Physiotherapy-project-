@@ -85,3 +85,15 @@ def test_pipeline_step_runs_with_ml_and_falls_back_first(resolve, tmp_path):
     assert sources[0] == "raw" and sources[-1] == "ML"
     assert pipe.source_counts["ML"] > 60
     assert all(a is None or 0 <= a <= 180 for a in angles)
+
+
+def test_shoulder_never_uses_the_elbow_models(resolve, tmp_path):
+    """I_ML and the curve measure the ELBOW: a shoulder session must get variant A, no curve."""
+    cal = tmp_path / "cal.json"; cal.write_text("{}")
+    cfg = {"method": "ML", "iml_model": _model(tmp_path), "fallback_calibration": str(cal)}
+    v, _, c = resolve(None, None, None, cfg, exercise="shoulder")
+    assert v == "A" and c is None
+    v, _, c = resolve("ML", None, str(cal), cfg, exercise="shoulder")
+    assert v == "A" and c is None
+    v, _, _ = resolve("B", None, None, cfg, exercise="shoulder")      # other variants still allowed
+    assert v == "B"
