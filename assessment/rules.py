@@ -17,6 +17,11 @@ ASYM_THRESHOLD = 0.04   # shoulder height difference > 4% of frame = fault (Pavl
 # (measured in the CALIB phase) a rep may stop before it is flagged
 ROM_TOLERANCE  = 10.0
 
+# Shoulder exercises: how far the shoulder line may tilt against the hip line,
+# compared with the start of the rep, before it counts as hiking the shoulder.
+# Preliminary value: tune it on recorded clean and hiked reps.
+SHOULDER_TILT_THRESHOLD = 10.0   # degrees
+
 ROM_FAULT = {
     "flex":  'Incomplete flexion — try to bend your elbow a little further',
     "raise": 'Raise your arm a little higher',
@@ -244,6 +249,46 @@ def check_asymmetry(rep, frame_height=480.0, frame_width=640.0):
     return 'ok'
 
 
+def _line_tilt_deg(lm, left, right, sx, sy):
+    """Tilt of the left->right line from horizontal, per frame, in degrees (-90..90)."""
+    dx = (lm[:, left, 0] - lm[:, right, 0]) * sx
+    dy = (lm[:, left, 1] - lm[:, right, 1]) * sy
+    return np.degrees(np.arctan(dy / np.where(np.abs(dx) < 1e-9, np.nan, dx)))
+
+
+def check_shoulder_hike(rep, frame_height=480.0, frame_width=640.0):
+    """
+    Shoulder hiking (shrugging) for SHOULDER exercises, front view only.
+
+    check_shoulder_elevation and check_asymmetry compare raw image heights, so
+    they fire on every abduction rep. This check instead measures the tilt of the
+    shoulder line RELATIVE to the hip line, and how much that changes from the
+    start of the rep. It needs no frame size and no left/right argument, and:
+      - standing with one shoulder naturally lower does not flag (start is the baseline)
+      - leaning the whole trunk does not flag here (both lines tilt; check_trunk_lean has it)
+      - lifting one shoulder toward the ear does flag
+    Returns 'ok', fault string, or None if it cannot be judged.
+    """
+    lm = _landmark_array(rep.get('_landmarks'))
+    if lm is None:
+        return None
+    if _near_shoulder_if_profile(lm, frame_height, frame_width) is not None:
+        return None                            # side view: far shoulder is a guess
+
+    is_pixel = bool(np.nanmedian(lm[:, [11, 12], 1]) > 1.0)
+    sx = 1.0 if is_pixel else float(frame_width or 640.0)
+    sy = 1.0 if is_pixel else float(frame_height or 480.0)
+
+    rel = _line_tilt_deg(lm, 11, 12, sx, sy) - _line_tilt_deg(lm, 23, 24, sx, sy)
+    rel = rel[np.isfinite(rel)]
+    if len(rel) < 5:
+        return None
+    change = np.abs(rel - float(np.median(rel[:3])))
+    if float(np.percentile(change, 90)) > SHOULDER_TILT_THRESHOLD:
+        return 'Keep your shoulder down — do not shrug as you raise your arm'
+    return 'ok'
+
+
 def run_checks(rep, frame_height=480.0, rom_params=None, frame_width=640.0, calibrated_flex_thresh=None):
     """
     Run all five compensation checks.
@@ -258,13 +303,24 @@ def run_checks(rep, frame_height=480.0, rom_params=None, frame_width=640.0, cali
         else:
             rom_params = {"kind": "flex", "target": 55.0}
 
+    is_shoulder = (isinstance(rom_params, dict)
+                   and str(rom_params.get("exercise", "")).startswith("shoulder"))
+    if is_shoulder:
+        # raw shoulder height / left-right height difference change on every
+        # abduction rep, so shoulders get the hip-relative check instead
+        elevation = lambda r: check_shoulder_hike(r, frame_height, frame_width)
+        asymmetry = lambda r: None             # covered by check_shoulder_hike
+    else:
+        elevation = lambda r: check_shoulder_elevation(r, frame_height, frame_width)
+        asymmetry = lambda r: check_asymmetry(r, frame_height, frame_width)
+
     named_checks = [
         ("rom", lambda r: check_rom(r, rom_params)),
         ("speed", check_speed),
-        ("shoulder_elevation", lambda r: None if (rom_params or {}).get("exercise","").startswith("shoulder")
-                       else check_shoulder_elevation(r, frame_height, frame_width)),        ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
-        ("asymmetry", lambda r: None if (rom_params or {}).get("exercise","").startswith("shoulder")
-              else check_asymmetry(r, frame_height, frame_width)),    ]
+        ("shoulder_elevation", elevation),
+        ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
+        ("asymmetry", asymmetry),
+    ]
     faults = []
     n_checked = 0
     for name, fn in named_checks:

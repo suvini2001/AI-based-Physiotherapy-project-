@@ -23,6 +23,7 @@ from angles import angle
 from angles_world import mask_world_like
 from calibration import load_params, apply_calibration, calibration_warnings
 from vision.gap_fill import fill_gaps
+from capture.view_check import front_view_status
 from vision.overlay import JOINTS, put_big_text
 from exercise_state import (ElbowFSM, ShoulderFSM, save_session,
                             calibration_cycle_complete)
@@ -126,7 +127,9 @@ def resolve_angle_method(variant, iml_model, calibration, angle_cfg, exercise="e
     if exercise != "elbow":
         if variant == "ML" or (variant is None and angle_cfg.get("method") == "ML"):
             print(f"Angle: {exercise} uses the 2D angle (variant A); I_ML is trained for the elbow only")
-        variant = "A" if variant in (None, "ML") else variant
+        if variant == "C":
+            print(f"WARNING: variant C is the ELBOW yaw correction - {exercise} uses variant A instead")
+        variant = "A" if variant in (None, "ML", "C") else variant
         if calibration is not None:
             print(f"WARNING: {calibration} is an elbow curve - not applied to {exercise}")
         return variant, iml_model or angle_cfg.get("iml_model"), None
@@ -263,6 +266,7 @@ def main():
     is_file = isinstance(source, str)
     state   = fsm.state
     fps     = 0.0          # measured frame rate, updated every frame
+    view_frames, turned_since, view_warning, last_view_speech = {}, None, False, -1e9
 
     while True:
         t0        = time.perf_counter()
@@ -285,6 +289,8 @@ def main():
             # announce once
             if not _announced_ready and timestamp > 0.1:
                 audio_feedback.speak(
+                    "Get ready. Stand still, facing the camera, with your whole upper body in view."
+                    if args.exercise == "shoulder" else
                     "Get ready. Stand still and face the camera.",
                     priority=True)
                 _announced_ready = True
@@ -333,6 +339,16 @@ def main():
             # FSM only runs here — not during READY or CALIB
             state, _ = fsm.update(ang, timestamp, landmarks=clean)
 
+        # shoulder abduction is only measured correctly facing the camera
+        if args.exercise == "shoulder":
+            view = front_view_status(clean, size)
+            view_frames[view] = view_frames.get(view, 0) + 1
+            turned_since = (turned_since or timestamp) if view == "turn" else None
+            view_warning = turned_since is not None and timestamp - turned_since >= 1.0
+            if view_warning and timestamp - last_view_speech >= 8.0:
+                audio_feedback.speak("Please face the camera.", priority=True)
+                last_view_speech = timestamp
+
         t3  = time.perf_counter()
         fps = counter.tick()
 
@@ -371,7 +387,8 @@ def main():
                 "target":      goal,
                 "target_kind": kind,
                 "feedback":    _feedback_rep if showing else None,
-                "notice":      "Calibration failed: default goal" if calib_failed else None,
+                "notice":      ("Please face the camera" if view_warning
+                                else "Calibration failed: default goal" if calib_failed else None),
                 "fps":         fps,
             }, pose=clean, mirror=args.mirror)
         else:
@@ -428,6 +445,9 @@ def main():
                                if pipe.iml is not None else None),
             "share_of_frames": {k: round(v / total, 3) for k, v in pipe.source_counts.items()},
         }
+        if view_frames:      # shoulder: how much of the session was really a front view
+            seen = sum(view_frames.values()) or 1
+            session["front_view_share"] = round(view_frames.get("ok", 0) / seen, 3)
         with open(args.session_out, "w") as f:
             json.dump(session, f, indent=2)
     else:

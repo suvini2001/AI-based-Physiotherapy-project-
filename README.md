@@ -22,6 +22,13 @@ python -m pytest -q             # all tests should pass
 shoulder height, 2–3 m away, whole upper body in frame. The arm nearest the
 camera is measured: right side to the camera → `--side right`.
 
+**Camera setup (shoulder abduction).** The opposite of the elbow: stand **facing**
+the camera, camera at chest height, 2–3 m away, both shoulders and both hips in
+frame, and raise the arm **out to the side**. The angle is measured in the image
+(hip–shoulder–elbow), so an arm raised forward, toward the camera, reads close to
+0° and is not counted. The session shows "Please face the camera" when the body is
+turned away, and saves `front_view_share` in the session log.
+
 **2. Personal calibration (straight-arm check).** Loads `data/population_curve.json`
 and saves `data/user_calibration.json`. The status must be `ok`; `warn` means the
 camera position is wrong (for example a straight arm reading ~90°). The curve is

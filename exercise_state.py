@@ -585,11 +585,28 @@ class ShoulderFSM:
                 self.state    = "RESTING"
                 rep_completed = True
                 self._finish_rep(timestamp_s)
+            elif (direction > self.MIN_DELTA
+                  and angle_deg - self._idle_extreme >= self.REVERSAL_FRACTION * self.MIN_ROM):
+                # raised again before reaching rest (half-lowered arm). Close the
+                # rep that was in progress and start the next one from here, the
+                # same way ElbowFSM leaves EXTENDING. The rise must be a real one
+                # (half of MIN_ROM above the lowest point) so a wobble on the way
+                # down does not split one rep into two.
+                before = self.rep_count
+                self._finish_rep(timestamp_s)
+                if self.rep_count > before:
+                    rep_completed = True
+                self.state           = "RAISING"
+                self._rep_angles     = [angle_deg]
+                self._rep_landmarks  = [frame_lm]
+                self._rep_start_time = timestamp_s
+                self._start_extreme, self._idle_extreme = self._idle_extreme, None
 
         self.prev_angle = angle_deg
         return self.state, rep_completed
 
     MIN_ROM = 20.0   # add this as a class constant at the top of each class
+    REVERSAL_FRACTION = 0.5   # re-raise must climb this share of MIN_ROM to start a new rep
 
     def _finish_rep(self, timestamp_s):
         if not self._rep_angles:

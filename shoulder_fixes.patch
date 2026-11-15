@@ -1,0 +1,468 @@
+diff --git a/README.md b/README.md
+index cf4c0d9..ebffa09 100644
+--- a/README.md
++++ b/README.md
+@@ -22,6 +22,13 @@ python -m pytest -q             # all tests should pass
+ shoulder height, 2–3 m away, whole upper body in frame. The arm nearest the
+ camera is measured: right side to the camera → `--side right`.
+ 
++**Camera setup (shoulder abduction).** The opposite of the elbow: stand **facing**
++the camera, camera at chest height, 2–3 m away, both shoulders and both hips in
++frame, and raise the arm **out to the side**. The angle is measured in the image
++(hip–shoulder–elbow), so an arm raised forward, toward the camera, reads close to
++0° and is not counted. The session shows "Please face the camera" when the body is
++turned away, and saves `front_view_share` in the session log.
++
+ **2. Personal calibration (straight-arm check).** Loads `data/population_curve.json`
+ and saves `data/user_calibration.json`. The status must be `ok`; `warn` means the
+ camera position is wrong (for example a straight arm reading ~90°). The curve is
+diff --git a/assessment/rules.py b/assessment/rules.py
+index 724662c..2444fcf 100644
+--- a/assessment/rules.py
++++ b/assessment/rules.py
+@@ -17,6 +17,11 @@ ASYM_THRESHOLD = 0.04   # shoulder height difference > 4% of frame = fault (Pavl
+ # (measured in the CALIB phase) a rep may stop before it is flagged
+ ROM_TOLERANCE  = 10.0
+ 
++# Shoulder exercises: how far the shoulder line may tilt against the hip line,
++# compared with the start of the rep, before it counts as hiking the shoulder.
++# Preliminary value: tune it on recorded clean and hiked reps.
++SHOULDER_TILT_THRESHOLD = 10.0   # degrees
++
+ ROM_FAULT = {
+     "flex":  'Incomplete flexion — try to bend your elbow a little further',
+     "raise": 'Raise your arm a little higher',
+@@ -244,6 +249,46 @@ def check_asymmetry(rep, frame_height=480.0, frame_width=640.0):
+     return 'ok'
+ 
+ 
++def _line_tilt_deg(lm, left, right, sx, sy):
++    """Tilt of the left->right line from horizontal, per frame, in degrees (-90..90)."""
++    dx = (lm[:, left, 0] - lm[:, right, 0]) * sx
++    dy = (lm[:, left, 1] - lm[:, right, 1]) * sy
++    return np.degrees(np.arctan(dy / np.where(np.abs(dx) < 1e-9, np.nan, dx)))
++
++
++def check_shoulder_hike(rep, frame_height=480.0, frame_width=640.0):
++    """
++    Shoulder hiking (shrugging) for SHOULDER exercises, front view only.
++
++    check_shoulder_elevation and check_asymmetry compare raw image heights, so
++    they fire on every abduction rep. This check instead measures the tilt of the
++    shoulder line RELATIVE to the hip line, and how much that changes from the
++    start of the rep. It needs no frame size and no left/right argument, and:
++      - standing with one shoulder naturally lower does not flag (start is the baseline)
++      - leaning the whole trunk does not flag here (both lines tilt; check_trunk_lean has it)
++      - lifting one shoulder toward the ear does flag
++    Returns 'ok', fault string, or None if it cannot be judged.
++    """
++    lm = _landmark_array(rep.get('_landmarks'))
++    if lm is None:
++        return None
++    if _near_shoulder_if_profile(lm, frame_height, frame_width) is not None:
++        return None                            # side view: far shoulder is a guess
++
++    is_pixel = bool(np.nanmedian(lm[:, [11, 12], 1]) > 1.0)
++    sx = 1.0 if is_pixel else float(frame_width or 640.0)
++    sy = 1.0 if is_pixel else float(frame_height or 480.0)
++
++    rel = _line_tilt_deg(lm, 11, 12, sx, sy) - _line_tilt_deg(lm, 23, 24, sx, sy)
++    rel = rel[np.isfinite(rel)]
++    if len(rel) < 5:
++        return None
++    change = np.abs(rel - float(np.median(rel[:3])))
++    if float(np.percentile(change, 90)) > SHOULDER_TILT_THRESHOLD:
++        return 'Keep your shoulder down — do not shrug as you raise your arm'
++    return 'ok'
++
++
+ def run_checks(rep, frame_height=480.0, rom_params=None, frame_width=640.0, calibrated_flex_thresh=None):
+     """
+     Run all five compensation checks.
+@@ -258,13 +303,24 @@ def run_checks(rep, frame_height=480.0, rom_params=None, frame_width=640.0, cali
+         else:
+             rom_params = {"kind": "flex", "target": 55.0}
+ 
++    is_shoulder = (isinstance(rom_params, dict)
++                   and str(rom_params.get("exercise", "")).startswith("shoulder"))
++    if is_shoulder:
++        # raw shoulder height / left-right height difference change on every
++        # abduction rep, so shoulders get the hip-relative check instead
++        elevation = lambda r: check_shoulder_hike(r, frame_height, frame_width)
++        asymmetry = lambda r: None             # covered by check_shoulder_hike
++    else:
++        elevation = lambda r: check_shoulder_elevation(r, frame_height, frame_width)
++        asymmetry = lambda r: check_asymmetry(r, frame_height, frame_width)
++
+     named_checks = [
+         ("rom", lambda r: check_rom(r, rom_params)),
+         ("speed", check_speed),
+-        ("shoulder_elevation", lambda r: None if (rom_params or {}).get("exercise","").startswith("shoulder")
+-                       else check_shoulder_elevation(r, frame_height, frame_width)),        ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
+-        ("asymmetry", lambda r: None if (rom_params or {}).get("exercise","").startswith("shoulder")
+-              else check_asymmetry(r, frame_height, frame_width)),    ]
++        ("shoulder_elevation", elevation),
++        ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
++        ("asymmetry", asymmetry),
++    ]
+     faults = []
+     n_checked = 0
+     for name, fn in named_checks:
+diff --git a/capture/view_check.py b/capture/view_check.py
+index 1f47c35..b63bd88 100644
+--- a/capture/view_check.py
++++ b/capture/view_check.py
+@@ -20,6 +20,31 @@ YAW_WARN_DEG  = 30.0   # amber warning starts here
+ YAW_BLOCK_DEG = 50.0   # red block: gate will reject most frames above this
+ 
+ 
++FRONT_RATIO = 0.50   # shoulder width / torso length; below this the body is turned away
++                     # (about 0.65-0.75 facing the camera). Preliminary: tune on your clips.
++
++
++def front_view_status(landmarks, size=(640, 480), min_ratio=FRONT_RATIO):
++    """
++    Is the person FACING the camera? Needed for shoulder abduction, where the
++    2D hip-shoulder-elbow angle is only right in a front view.
++
++    landmarks: (33, >=2) normalised landmarks of one frame (NaN = not seen).
++    Returns 'ok', 'turn' (turned away: ask them to face the camera) or 'unknown'.
++    """
++    if landmarks is None:
++        return "unknown"
++    lm = np.asarray(landmarks, dtype=float)
++    pts = lm[[11, 12, 23, 24], :2] * np.array(size, dtype=float)
++    if not np.isfinite(pts).all():
++        return "unknown"
++    l_sh, r_sh, l_hip, r_hip = pts
++    torso = np.linalg.norm((l_sh + r_sh) / 2.0 - (l_hip + r_hip) / 2.0)
++    if torso <= 0:
++        return "unknown"
++    return "ok" if abs(l_sh[0] - r_sh[0]) / torso >= min_ratio else "turn"
++
++
+ def draw_yaw_message(frame, yaw_deg, warn_at=YAW_WARN_DEG, block_at=YAW_BLOCK_DEG):
+     """Draw a coloured banner on frame in-place.  Returns the status string.
+ 
+diff --git a/demo_cv.py b/demo_cv.py
+index 0b00bea..7649794 100644
+--- a/demo_cv.py
++++ b/demo_cv.py
+@@ -23,6 +23,7 @@ from angles import angle
+ from angles_world import mask_world_like
+ from calibration import load_params, apply_calibration, calibration_warnings
+ from vision.gap_fill import fill_gaps
++from capture.view_check import front_view_status
+ from vision.overlay import JOINTS, put_big_text
+ from exercise_state import (ElbowFSM, ShoulderFSM, save_session,
+                             calibration_cycle_complete)
+@@ -126,7 +127,9 @@ def resolve_angle_method(variant, iml_model, calibration, angle_cfg, exercise="e
+     if exercise != "elbow":
+         if variant == "ML" or (variant is None and angle_cfg.get("method") == "ML"):
+             print(f"Angle: {exercise} uses the 2D angle (variant A); I_ML is trained for the elbow only")
+-        variant = "A" if variant in (None, "ML") else variant
++        if variant == "C":
++            print(f"WARNING: variant C is the ELBOW yaw correction - {exercise} uses variant A instead")
++        variant = "A" if variant in (None, "ML", "C") else variant
+         if calibration is not None:
+             print(f"WARNING: {calibration} is an elbow curve - not applied to {exercise}")
+         return variant, iml_model or angle_cfg.get("iml_model"), None
+@@ -263,6 +266,7 @@ def main():
+     is_file = isinstance(source, str)
+     state   = fsm.state
+     fps     = 0.0          # measured frame rate, updated every frame
++    view_frames, turned_since, view_warning, last_view_speech = {}, None, False, -1e9
+ 
+     while True:
+         t0        = time.perf_counter()
+@@ -285,6 +289,8 @@ def main():
+             # announce once
+             if not _announced_ready and timestamp > 0.1:
+                 audio_feedback.speak(
++                    "Get ready. Stand still, facing the camera, with your whole upper body in view."
++                    if args.exercise == "shoulder" else
+                     "Get ready. Stand still and face the camera.",
+                     priority=True)
+                 _announced_ready = True
+@@ -333,6 +339,16 @@ def main():
+             # FSM only runs here — not during READY or CALIB
+             state, _ = fsm.update(ang, timestamp, landmarks=clean)
+ 
++        # shoulder abduction is only measured correctly facing the camera
++        if args.exercise == "shoulder":
++            view = front_view_status(clean, size)
++            view_frames[view] = view_frames.get(view, 0) + 1
++            turned_since = (turned_since or timestamp) if view == "turn" else None
++            view_warning = turned_since is not None and timestamp - turned_since >= 1.0
++            if view_warning and timestamp - last_view_speech >= 8.0:
++                audio_feedback.speak("Please face the camera.", priority=True)
++                last_view_speech = timestamp
++
+         t3  = time.perf_counter()
+         fps = counter.tick()
+ 
+@@ -371,7 +387,8 @@ def main():
+                 "target":      goal,
+                 "target_kind": kind,
+                 "feedback":    _feedback_rep if showing else None,
+-                "notice":      "Calibration failed: default goal" if calib_failed else None,
++                "notice":      ("Please face the camera" if view_warning
++                                else "Calibration failed: default goal" if calib_failed else None),
+                 "fps":         fps,
+             }, pose=clean, mirror=args.mirror)
+         else:
+@@ -428,6 +445,9 @@ def main():
+                                if pipe.iml is not None else None),
+             "share_of_frames": {k: round(v / total, 3) for k, v in pipe.source_counts.items()},
+         }
++        if view_frames:      # shoulder: how much of the session was really a front view
++            seen = sum(view_frames.values()) or 1
++            session["front_view_share"] = round(view_frames.get("ok", 0) / seen, 3)
+         with open(args.session_out, "w") as f:
+             json.dump(session, f, indent=2)
+     else:
+diff --git a/exercise_state.py b/exercise_state.py
+index dbce1b2..06d75ea 100644
+--- a/exercise_state.py
++++ b/exercise_state.py
+@@ -585,11 +585,28 @@ class ShoulderFSM:
+                 self.state    = "RESTING"
+                 rep_completed = True
+                 self._finish_rep(timestamp_s)
++            elif (direction > self.MIN_DELTA
++                  and angle_deg - self._idle_extreme >= self.REVERSAL_FRACTION * self.MIN_ROM):
++                # raised again before reaching rest (half-lowered arm). Close the
++                # rep that was in progress and start the next one from here, the
++                # same way ElbowFSM leaves EXTENDING. The rise must be a real one
++                # (half of MIN_ROM above the lowest point) so a wobble on the way
++                # down does not split one rep into two.
++                before = self.rep_count
++                self._finish_rep(timestamp_s)
++                if self.rep_count > before:
++                    rep_completed = True
++                self.state           = "RAISING"
++                self._rep_angles     = [angle_deg]
++                self._rep_landmarks  = [frame_lm]
++                self._rep_start_time = timestamp_s
++                self._start_extreme, self._idle_extreme = self._idle_extreme, None
+ 
+         self.prev_angle = angle_deg
+         return self.state, rep_completed
+ 
+     MIN_ROM = 20.0   # add this as a class constant at the top of each class
++    REVERSAL_FRACTION = 0.5   # re-raise must climb this share of MIN_ROM to start a new rep
+ 
+     def _finish_rep(self, timestamp_s):
+         if not self._rep_angles:
+diff --git a/tests/test_fsm.py b/tests/test_fsm.py
+index addd84e..cf40dfe 100644
+--- a/tests/test_fsm.py
++++ b/tests/test_fsm.py
+@@ -178,7 +178,11 @@ def test_shoulder_fsm_calibration_and_scoring_rom_check():
+ 
+ def test_extending_to_flexing_reversal_flags_rep_completed():
+     fsm = ElbowFSM()
+-    signal = [162.0] * 5 + list(np.linspace(162, 40, 20)) + [60.0, 90.0, 130.0, 120.0]
++    # Direction is measured over DIRECTION_WINDOW_S (0.3 s), so the turn-back has
++    # to last that long. The old signal jumped 30-40 degrees per frame (about
++    # 1000 deg/s) and reversed for a single frame, which no arm can do.
++    signal = ([162.0] * 5 + list(np.linspace(162, 40, 20))
++              + list(np.linspace(40, 130, 20)) + list(np.linspace(130, 95, 12)))
+     completed = []
+     for i, a in enumerate(signal):
+         state, rep_done = fsm.update(float(a), i / 30.0)
+@@ -188,3 +192,89 @@ def test_extending_to_flexing_reversal_flags_rep_completed():
+     assert completed[0][1] == "FLEXING"
+     assert fsm.rep_count == 1
+ 
++
++
++# ── ShoulderFSM: half-lowered, limited range, slow, noisy ────────────
++def shoulder_reps(tops, bottoms, rest=8.0, fps=30, half_s=1.0, rest_s=0.8):
++    """Raise to tops[i], lower to bottoms[i] (the last one should be `rest`)."""
++    n = int(half_s * fps)
++    sig, low = [rest] * int(rest_s * fps), rest
++    for top, bottom in zip(tops, bottoms):
++        sig += list(np.linspace(low, top, n)) + list(np.linspace(top, bottom, n))
++        low = bottom
++    return np.array(sig + [rest] * int(rest_s * fps))
++
++
++def test_shoulder_half_lowered_reraise_is_not_lost():
++    """4 raises, lowering only to 45 between them: every raise is a rep, none vanish."""
++    sig = shoulder_reps([90, 90, 90, 90], [45, 45, 45, 8])
++    fsm = ShoulderFSM()                 # no calibration: no range rule, all four count
++    run_fsm(fsm, sig)
++    assert fsm.rep_count == 4
++    assert fsm.state == "RESTING"       # not stuck in LOWERING
++
++
++def test_shoulder_half_lowered_is_flagged_when_calibrated():
++    """With a calibrated range, a raise that starts half-lowered is reported, not dropped."""
++    fsm = ShoulderFSM()
++    assert fsm.calibrate_from_signal(make_shoulder_signal(n_reps=1))
++    run_fsm(fsm, shoulder_reps([90, 90, 90, 90], [45, 45, 45, 8]))
++    assert fsm.rep_count + len(fsm.incomplete_attempts) == 4
++    assert fsm.rep_count >= 1
++    assert all(a["reason"] == "lower" for a in fsm.incomplete_attempts)
++
++
++def test_shoulder_reversal_flags_rep_completed():
++    fsm = ShoulderFSM()
++    done = []
++    for i, a in enumerate(shoulder_reps([90, 90], [45, 8])):
++        state, rep_done = fsm.update(float(a), i / 30.0)
++        if rep_done:
++            done.append(state)
++    assert done == ["RAISING", "RESTING"]
++
++
++def test_shoulder_wobble_while_lowering_does_not_split_the_rep():
++    """A 6 degree bounce on the way down is not a new raise."""
++    n = 30
++    sig = ([8.0] * 24 + list(np.linspace(8, 90, n)) + list(np.linspace(90, 50, 15))
++           + list(np.linspace(50, 56, 6)) + list(np.linspace(56, 8, 20)) + [8.0] * 24)
++    fsm = ShoulderFSM()
++    run_fsm(fsm, sig)
++    assert fsm.rep_count == 1
++    assert fsm.incomplete_attempts == []
++
++
++def test_shoulder_limited_range_counts_after_calibration():
++    """A patient who only reaches 60 degrees: calibrated on their own range, reps count."""
++    limited = shoulder_reps([60] * 4, [15] * 4, rest=15.0)
++    fsm = ShoulderFSM()
++    assert fsm.calibrate_from_signal(shoulder_reps([60], [15], rest=15.0))
++    run_fsm(fsm, limited)
++    assert fsm.rep_count == 4
++    assert fsm.incomplete_attempts == []
++
++
++def test_shoulder_limited_range_without_calibration_is_reported_not_silent():
++    """Known limit: the fixed 75 degree default counts nothing for a 60 degree patient,
++    but every raise must still show up as an incomplete attempt."""
++    fsm = ShoulderFSM()
++    run_fsm(fsm, shoulder_reps([60] * 4, [15] * 4, rest=15.0))
++    assert fsm.rep_count == 0
++    assert len(fsm.incomplete_attempts) == 4
++
++
++def test_shoulder_slow_reps_on_a_slow_camera():
++    """4 s up, 4 s down at 7 FPS."""
++    sig = shoulder_reps([90] * 3, [8] * 3, fps=7, half_s=4.0)
++    fsm = ShoulderFSM()
++    run_fsm(fsm, sig, fps=7)
++    assert fsm.rep_count == 3
++
++
++def test_shoulder_noisy_signal_counts_correctly():
++    rng = np.random.default_rng(0)
++    sig = make_shoulder_signal(n_reps=5)
++    fsm = ShoulderFSM()
++    run_fsm(fsm, sig + rng.normal(0, 1.5, len(sig)))
++    assert fsm.rep_count == 5
+diff --git a/tests/test_shoulder_checks.py b/tests/test_shoulder_checks.py
+new file mode 100644
+index 0000000..02246ff
+--- /dev/null
++++ b/tests/test_shoulder_checks.py
+@@ -0,0 +1,99 @@
++# tests/test_shoulder_checks.py
++"""Shoulder abduction: hip-relative shoulder-hike check, front-view check, variant guard."""
++import numpy as np
++from assessment import rules
++from assessment.rules import check_shoulder_hike, run_checks
++from capture.view_check import front_view_status
++
++SHOULDER = {"kind": "raise", "target": 75.0, "exercise": "shoulder_abduction"}
++
++
++def front_pose(n=40, hike=0.0, lean_deg=0.0, low_left=0.0):
++    """
++    Front view, normalised coordinates, 640x480. Right arm abducts 10 -> 90 -> 10.
++    hike:     how far the right shoulder lifts at the top (fraction of frame height)
++    lean_deg: whole trunk tilts sideways by this much at the top
++    low_left: left shoulder permanently lower (natural posture)
++    """
++    lm = np.full((n, 33, 4), np.nan)
++    phase = np.sin(np.linspace(0, np.pi, n))            # 0 -> 1 -> 0
++    for f in range(n):
++        p = phase[f]
++        pts = {11: [0.60, 0.30 + low_left], 12: [0.40, 0.30 - hike * p],
++               23: [0.56, 0.62], 24: [0.44, 0.62]}
++        a = np.radians(10 + 80 * p)                     # right arm, away from the body
++        pts[14] = [0.40 - 0.13 * np.sin(a), 0.30 - hike * p + 0.17 * np.cos(a)]
++        t = np.radians(lean_deg * p)                    # rotate everything about the hips
++        for idx, (x, y) in pts.items():
++            dx, dy = (x - 0.50) * 640, (y - 0.62) * 480
++            rx = dx * np.cos(t) - dy * np.sin(t)
++            ry = dx * np.sin(t) + dy * np.cos(t)
++            lm[f, idx] = [0.50 + rx / 640, 0.62 + ry / 480, 0.0, 1.0]
++    return {"_landmarks": lm, "max_angle": 90.0, "min_angle": 10.0, "duration_s": 2.0}
++
++
++def test_clean_abduction_has_no_hike_fault():
++    assert check_shoulder_hike(front_pose()) == "ok"
++
++
++def test_hiked_shoulder_is_flagged():
++    assert "shoulder down" in check_shoulder_hike(front_pose(hike=0.06))
++
++
++def test_naturally_uneven_shoulders_are_not_flagged():
++    assert check_shoulder_hike(front_pose(low_left=0.04)) == "ok"
++
++
++def test_trunk_lean_is_left_to_the_lean_check():
++    rep = front_pose(lean_deg=18.0)
++    assert check_shoulder_hike(rep) == "ok"
++    assert "leaning sideways" in rules.check_trunk_lean(rep)
++
++
++def test_shoulder_session_runs_the_hike_check_again():
++    """The check must be ON for shoulder exercises (it was switched off before)."""
++    faults, n_checked = run_checks(front_pose(hike=0.06), rom_params=SHOULDER)
++    assert any("shoulder down" in f for f in faults)
++    clean_faults, clean_n = run_checks(front_pose(), rom_params=SHOULDER)
++    assert clean_faults == []
++    assert clean_n == n_checked == 4          # rom, speed, hike, lean
++
++
++def test_elbow_session_keeps_its_old_checks():
++    elbow = {"kind": "flex", "target": 55.0, "exercise": "elbow_flexion"}
++    rep = front_pose(); rep["min_angle"] = 40.0
++    _, n_checked = run_checks(rep, rom_params=elbow)
++    assert n_checked == 5
++
++
++def test_hike_check_skipped_without_landmarks_or_side_on():
++    assert check_shoulder_hike({"_landmarks": None}) is None
++    rep = front_pose()
++    rep["_landmarks"][:, 11, 0] = 0.41            # shoulders overlap: side view
++    assert check_shoulder_hike(rep) is None
++
++
++# ── front-view check ─────────────────────────────────────────────
++def test_front_view_ok_when_facing_camera():
++    assert front_view_status(front_pose()["_landmarks"][0]) == "ok"
++
++
++def test_front_view_turn_when_rotated_away():
++    lm = front_pose()["_landmarks"][0]
++    for idx in (11, 12, 23, 24):                  # 60 degree body turn: widths shrink to half
++        lm[idx, 0] = 0.5 + (lm[idx, 0] - 0.5) * 0.5
++    assert front_view_status(lm) == "turn"
++
++
++def test_front_view_unknown_when_landmarks_missing():
++    lm = front_pose()["_landmarks"][0]
++    lm[23] = np.nan
++    assert front_view_status(lm) == "unknown"
++    assert front_view_status(None) == "unknown"
++
++
++def test_variant_c_is_not_used_for_the_shoulder(capsys):
++    from demo_cv import resolve_angle_method
++    v, _, _ = resolve_angle_method("C", None, None, {}, exercise="shoulder")
++    assert v == "A"
++    assert "ELBOW" in capsys.readouterr().out

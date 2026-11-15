@@ -139,7 +139,7 @@ def test_torso_scale_falls_back_to_shoulders_without_hips():
 
 def test_model_meta_selects_the_feature_stream(tmp_path, model):
     m = tmp_path / "exp.txt"
-    m.write_text(open(model).read())
+    m.write_bytes(open(model, "rb").read())
     json.dump({"features": KEEP, "feature_stream": {"session": "expanding", "scale": "torso"}},
               open(str(m) + ".json", "w"))
     s = IMLStream(str(m), "right", (640, 480), 30.0)
