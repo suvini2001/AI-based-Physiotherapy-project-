@@ -181,8 +181,9 @@ def main():
 
     # ── scorer ──────────────────────────────────────────────────────
     exercise_name = ("elbow_flexion_left" if args.exercise == "elbow" and args.side == "left"
-            else "elbow_flexion" if args.exercise == "elbow"
-            else f"shoulder_{args.exercise.replace('shoulder_', '')}")
+        else "elbow_flexion" if args.exercise == "elbow"
+        else "shoulder_abduction_right" if args.exercise == "shoulder" and args.side == "right"
+        else "shoulder_abduction")
     template_path = os.path.join("templates", f"{exercise_name}.json")
     if not os.path.exists(template_path):
         template_path = "template.json"
@@ -393,8 +394,19 @@ def main():
         # incomplete attempts count against the session (quality 0 each)
         summary = scorer.session_summary(fsm.reps, fsm.incomplete_attempts)
         print("\nSession summary:", fsm.summary())
-        print("Quality summary:", summary)
-
+        s = summary
+        print(f"\nReps completed : {s.get('n_reps', 0)}")
+        print(f"  Good reps    : {s.get('n_clean_reps', 0)}  ({round(100*s.get('n_clean_reps',0)/max(s.get('n_reps',1),1))}%)")
+        print(f"  Needs work   : {s.get('n_needs_work', 0)}  ({round(100*s.get('n_needs_work',0)/max(s.get('n_reps',1),1))}%)")
+        print(f"Not counted    : {s.get('n_incomplete', 0)}")
+        print(f"Session quality: {s.get('mean_quality', 0):.0f}%  Grade {s.get('grade', '?')}")
+        if s.get('top_fault'):
+            print(f"Top fault      : {s.get('top_fault')}")
+        if s.get('fault_counts'):
+            print("Fault breakdown:")
+            for fault, count in sorted(s['fault_counts'].items(), key=lambda x: -x[1]):
+                print(f"  {count}x  {fault}")
+                
         ok2, last_frame = src.read_frame()
         if not ok2:
             last_frame = frame

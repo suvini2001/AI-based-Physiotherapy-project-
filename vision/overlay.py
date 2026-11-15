@@ -373,14 +373,19 @@ def draw_session_summary(frame, summary):
           max(2, int(3 * k)))
     _text(frame, "GRADE", (gx - _text_w("GRADE", 0.5 * k) // 2, gy + 88 * k), 0.5 * k, MUTED)
 
-    n_inc = summary.get('n_incomplete', 0)
+    n_reps      = summary.get('n_reps', 0)
+    n_clean     = summary.get('n_clean_reps', 0)
+    n_needs     = summary.get('n_needs_work', 0)
+    n_inc       = summary.get('n_incomplete', 0)
+    pct_good    = round(100 * n_clean / n_reps) if n_reps else 0
     rows = [
-        ("Attempts",        f"{summary.get('n_attempts', summary.get('n_reps', 0))}", TEXT),
-        ("Completed reps",  f"{summary.get('n_reps', 0)}", TEXT),
-        ("Incomplete",      f"{n_inc}", WARN if n_inc else TEXT),
-        ("Clean reps",      f"{summary.get('n_clean_reps', 0)}", TEXT),
+        ("Reps completed",  f"{n_reps}", TEXT),
+        ("  Good reps",     f"{n_clean}  ({pct_good}%)", GOOD),
+        ("  Needs work",    f"{n_needs}  ({100-pct_good}%)", WARN if n_needs else TEXT),
+        ("Not counted",     f"{n_inc}", WARN if n_inc else TEXT),
         ("Session quality", f"{summary.get('mean_quality', 0):.0f}%", g_col),
     ]
+
     y = y0 + int(112 * k)
     for label, value, col in rows:
         _text(frame, label, (tx, y), 0.65 * k, MUTED)

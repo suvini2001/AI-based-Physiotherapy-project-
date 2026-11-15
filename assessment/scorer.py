@@ -124,13 +124,21 @@ def session_summary(reps, incomplete_attempts=None):
                   'C' if mean_q >= 55 else 'D')
     top_fault  = (max(set(all_faults), key=all_faults.count)
                   if all_faults else None)
+    
+    n_clean      = sum(1 for r in reps if not r.get('faults'))
+    n_needs_work = len(reps) - n_clean
+    fault_counts = {}
+    for f in all_faults:
+        fault_counts[f] = fault_counts.get(f, 0) + 1
+
     return {
-        'mean_quality': mean_q,
-        'grade':        grade,
-        'top_fault':    top_fault,
-        'n_reps':       len(reps),
-        'n_clean_reps': sum(1 for r in reps
-                           if not r.get('faults')),
-        'n_incomplete': len(incomplete),
-        'n_attempts':   len(reps) + len(incomplete),
+        'mean_quality':  mean_q,
+        'grade':         grade,
+        'top_fault':     top_fault,
+        'n_reps':        len(reps),
+        'n_clean_reps':  n_clean,
+        'n_needs_work':  n_needs_work,
+        'n_incomplete':  len(incomplete),
+        'n_attempts':    len(reps) + len(incomplete),
+        'fault_counts':  fault_counts,
     }

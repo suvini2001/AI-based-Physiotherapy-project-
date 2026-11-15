@@ -439,12 +439,14 @@ class ShoulderFSM:
     RAISE_THRESH = 75.0   # arm raised above this = abduction rep in progress
     REST_THRESH  = 30.0   # arm back below this   = rep complete
     MIN_DELTA    =  2.0
+    DIRECTION_WINDOW_S = 0.3   # add this line
     ROM_TARGET   = None   # highest raise the patient has shown; None = not known yet
     START_TARGET = None   # lowest resting angle the patient has shown
 
     def __init__(self, rep_callback=None, attempt_callback=None):
         self.state        = "RESTING"
         self.prev_angle   = None
+        self._angle_buffer = []   # (timestamp, angle) pairs for direction window
         self.rep_count    = 0
         self.rep_callback = rep_callback
         self._min_rep_s = 0.5
@@ -522,8 +524,13 @@ class ShoulderFSM:
             return self.state, False
 
         frame_lm = _frame_landmarks(landmarks)
-        direction = (angle_deg - self.prev_angle
-                     if self.prev_angle is not None else 0.0)
+        self._angle_buffer.append((timestamp_s, angle_deg))
+        cutoff = timestamp_s - self.DIRECTION_WINDOW_S
+        self._angle_buffer = [(t, a) for t, a in self._angle_buffer if t >= cutoff]
+        if len(self._angle_buffer) >= 2:
+            direction = self._angle_buffer[-1][1] - self._angle_buffer[0][1]
+        else:
+            direction = 0.0
         if self.state != "RESTING":
             self._rep_angles.append(angle_deg)
             self._rep_landmarks.append(frame_lm)

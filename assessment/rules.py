@@ -261,10 +261,10 @@ def run_checks(rep, frame_height=480.0, rom_params=None, frame_width=640.0, cali
     named_checks = [
         ("rom", lambda r: check_rom(r, rom_params)),
         ("speed", check_speed),
-        ("shoulder_elevation", lambda r: check_shoulder_elevation(r, frame_height, frame_width)),
-        ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
-        ("asymmetry", lambda r: check_asymmetry(r, frame_height, frame_width)),
-    ]
+        ("shoulder_elevation", lambda r: None if (rom_params or {}).get("exercise","").startswith("shoulder")
+                       else check_shoulder_elevation(r, frame_height, frame_width)),        ("lean", lambda r: check_trunk_lean(r, frame_height=frame_height, frame_width=frame_width)),
+        ("asymmetry", lambda r: None if (rom_params or {}).get("exercise","").startswith("shoulder")
+              else check_asymmetry(r, frame_height, frame_width)),    ]
     faults = []
     n_checked = 0
     for name, fn in named_checks:
