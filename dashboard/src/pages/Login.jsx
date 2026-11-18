@@ -50,8 +50,8 @@ export default function Login() {
           </p>
           <div className="mt-12 grid grid-cols-3 gap-6">
             {[
-              { value: '9.96°', label: 'MAE accuracy' },
-              { value: 'Real-time', label: 'Session streaming' },
+              { value: 'Prototype', label: 'Not clinically validated' },
+              { value: 'Simulated', label: 'Browser measurements' },
               { value: 'No video', label: 'Privacy preserved' },
             ].map(stat => (
               <div key={stat.label}>
@@ -117,9 +117,7 @@ export default function Login() {
           </form>
 
           <div className="mt-8 p-4 bg-slate-900 rounded-lg border border-slate-800">
-            <p className="text-slate-500 text-xs mb-2 font-medium">Demo credentials</p>
-            <p className="text-slate-400 text-xs font-mono">ID: DR001 · Password: physio2026</p>
-            <p className="text-slate-400 text-xs font-mono">ID: DR002 · Password: physio2026</p>
+            <p className="text-slate-400 text-xs">Use the local clinician account configured by the demo operator. Fictional data only.</p>
           </div>
         </div>
       </div>

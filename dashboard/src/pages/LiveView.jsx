@@ -64,7 +64,7 @@ export default function LiveView() {
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-2xl font-semibold text-white mb-1">Live session</h1>
-        <p className="text-slate-400 text-sm">Real-time kinematic feed from patient device</p>
+        <p className="text-slate-400 text-sm">Live AI integration is unavailable pending adapter verification. Browser simulations are not streamed here.</p>
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6 flex items-end gap-4 flex-wrap">
@@ -78,10 +78,10 @@ export default function LiveView() {
         </div>
         <div className="flex gap-3">
           {!connected ? (
-            <button onClick={connect}
+            <button disabled onClick={connect}
               className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-300 animate-pulse"/>
-              Connect
+              Unavailable
             </button>
           ) : (
             <button onClick={disconnect}
@@ -127,7 +127,7 @@ export default function LiveView() {
             {connected
               ? <><span className="text-2xl animate-spin">⟳</span><span>Waiting for frames…</span></>
               : <><p>Connect to a live session to see the angle chart.</p>
-                  <p className="text-slate-700 text-xs">Make sure demo_cv.py is running on the patient device.</p></>
+                  <p className="text-slate-700 text-xs">Use the patient browser simulation for this prototype.</p></>
             }
           </div>
         ) : (

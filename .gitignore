@@ -17,3 +17,19 @@ data/fit3d/
 data/calib_pairs_fit3d.npz
 data/calib_pairs_all.npz
 data/population_curve_fit3d.json
+# Local web development credentials, environments, and private artifacts
+.venv-web/
+.env
+.env.*
+!.env.example
+*.sql
+*.dump
+*.sqlite*
+*.db
+*.log
+offline_queue.json
+.pytest_cache/
+
+# Browser test artifacts
+dashboard/test-results/
+dashboard/playwright-report/

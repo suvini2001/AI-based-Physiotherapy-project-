@@ -31,17 +31,17 @@ export default function PatientList() {
           >
             <div>
               <p className="font-medium text-gray-800">{p.name}</p>
-              <p className="text-sm text-gray-400">ID #{p.id}  {p.notes || ''}</p>
+              <p className="text-sm text-gray-400">{p.patient_id || `Record #${p.id}`}   {p.notes || ''}</p>
             </div>
             <div className="flex gap-3">
               <button
-                onClick={e => { e.stopPropagation(); navigate(`/physio/${p.id}/live`) }}
+                onClick={e => { e.stopPropagation(); navigate(`/live`) }}
                 className="text-sm bg-green-100 text-green-700 px-3 py-1 rounded-lg hover:bg-green-200 transition"
               >
                 Live
               </button>
               <button
-                onClick={e => { e.stopPropagation(); navigate(`/physio/${p.id}/history`) }}
+                onClick={e => { e.stopPropagation(); navigate(`/patients/${p.id}`) }}
                 className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded-lg hover:bg-blue-200 transition"
               >
                 History

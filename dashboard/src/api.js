@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const BASE = 'http://localhost:8000'
+export const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function authHeaders() {
   const token = localStorage.getItem('physio_token')
@@ -32,19 +32,27 @@ export const api = {
   setPrescription: (data) =>
     axios.post(`${BASE}/api/prescriptions`, data, { headers: authHeaders() }),
 
-  seed: () =>
-    axios.post(`${BASE}/api/seed`),
 
-  launchSession: (patientId, exercise) =>
-    axios.post(`${BASE}/api/launch-session`, {
-      patient_id: patientId,
-      exercise: exercise,
-      side: 'right',
-    }),
+}
+export function clearPatientSession() {
+  sessionStorage.removeItem('patient_token')
+  localStorage.removeItem('patient')
+}
 
-  stopSession: (patientId) =>
-    axios.post(`${BASE}/api/stop-session`, { patient_id: patientId }),
-
-  sessionStatus: (patientId) =>
-    axios.get(`${BASE}/api/session-status/${patientId}`),
+export const patientClient = axios.create({ baseURL: BASE, timeout: 10000 })
+patientClient.interceptors.request.use(config => {
+  const token = sessionStorage.getItem('patient_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+patientClient.interceptors.response.use(response => response, error => {
+  if (error.response?.status === 401 && sessionStorage.getItem('patient_token')) {
+    clearPatientSession()
+    window.location.replace('/patient')
+  }
+  return Promise.reject(error)
+})
+export const patientApi = {
+  me: () => patientClient.get('/patient/me'),
+  lastSession: () => patientClient.get('/patient/me/last-session'),
 }

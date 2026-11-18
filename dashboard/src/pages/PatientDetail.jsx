@@ -48,6 +48,7 @@ export default function PatientDetail() {
   const [selectedSession, setSelectedSession] = useState(null)
   const [reps, setReps] = useState([])
   const [presc, setPresc] = useState({ exercise: 'elbow_flexion', target_reps: 10, target_rom: 100 })
+  const [prescError, setPrescError] = useState('')
   const [prescSaved, setPrescSaved] = useState(false)
   const [tab, setTab] = useState('progress')
 
@@ -70,9 +71,14 @@ export default function PatientDetail() {
   }
 
   async function savePresc() {
-    await api.setPrescription({ patient_id: Number(id), ...presc })
-    setPrescSaved(true)
-    setTimeout(() => setPrescSaved(false), 2000)
+    setPrescError('')
+    try {
+      await api.setPrescription({ patient_id: Number(id), ...presc })
+      setPrescSaved(true)
+      setTimeout(() => setPrescSaved(false), 2000)
+    } catch (error) {
+      setPrescError(typeof error.response?.data?.detail === 'string' ? error.response.data.detail : 'Could not save. Use 1–50 repetitions and a ROM between 0 and 180 degrees.')
+    }
   }
 
   const chartData = [...sessions].reverse().map((s, i) => ({
@@ -287,6 +293,7 @@ export default function PatientDetail() {
         </div>
       )}
 
+      {prescError && <p role="alert" className="text-red-400">{prescError}</p>}
       {tab === 'prescription' && (
         <div className="max-w-md">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">

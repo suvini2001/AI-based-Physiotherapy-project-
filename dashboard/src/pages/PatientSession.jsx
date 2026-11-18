@@ -1,158 +1,25 @@
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
+import { patientApi, clearPatientSession } from '../api'
+import { usePatient } from '../context/PatientContext'
 
 export default function PatientSession() {
   const navigate = useNavigate()
 
-  // ============================================
-  // STATE
-  // ============================================
-
-  const [patient, setPatient] = useState(null)
+  const patient = usePatient()
   const [lastSession, setLastSession] = useState(null)
-  const [screen, setScreen] = useState('ready')
-  const [launching, setLaunching] = useState(false)
   const [error, setError] = useState('')
-
-  const pollRef = useRef(null)
-
-  // ============================================
-  // LOAD PATIENT
-  // ============================================
-
   useEffect(() => {
-    const stored = localStorage.getItem('patient')
-    const token = sessionStorage.getItem('patient_token')
-
-    if (!stored || !token) {
-      localStorage.removeItem('patient')
-      sessionStorage.removeItem('patient_token')
-      navigate('/patient', { replace: true })
-      return
-    }
-
-    let currentPatient
-
-    try {
-      currentPatient = JSON.parse(stored)
-
-      if (!currentPatient?.id || !currentPatient?.patient_id) {
-        throw new Error('Invalid patient information')
-      }
-    } catch {
-      localStorage.removeItem('patient')
-      sessionStorage.removeItem('patient_token')
-      navigate('/patient', { replace: true })
-      return
-    }
-
-    setPatient(currentPatient)
-
-    // Existing desktop session status
-    api.sessionStatus(currentPatient.id)
-      .then(response => {
-        if (response.data.running) {
-          setScreen('active')
-        }
-      })
-      .catch(() => {})
-
-    // Existing last-session API
-    fetch(
-      `http://localhost:8000/patient/${currentPatient.id}/last-session`
-    )
-      .then(response => {
-        if (!response.ok) {
-          throw new Error('Could not load last session')
-        }
-        return response.json()
-      })
-      .then(setLastSession)
-      .catch(() => {})
-
-    return () => clearInterval(pollRef.current)
-  }, [navigate])
-
-  // ============================================
-  // SESSION POLLING
-  // ============================================
-
-  function startPolling(patientId) {
-    clearInterval(pollRef.current)
-
-    pollRef.current = setInterval(async () => {
-      try {
-        const response = await api.sessionStatus(patientId)
-
-        if (!response.data.running) {
-          clearInterval(pollRef.current)
-          setScreen('done')
-        }
-      } catch {
-        clearInterval(pollRef.current)
-      }
-    }, 2000)
-  }
-
-  // ============================================
-  // DESKTOP AI SESSION
-  // ============================================
-
-  async function handleStart() {
-    if (!patient) return
-
-    setLaunching(true)
-    setError('')
-
-    try {
-      await api.launchSession(
-        patient.id,
-        patient.exercise
-      )
-
-      setScreen('active')
-      startPolling(patient.id)
-    } catch (err) {
-      setError(
-        err.response?.data?.detail ||
-        'Could not launch the desktop AI session.'
-      )
-    } finally {
-      setLaunching(false)
-    }
-  }
-
-  async function handleStop() {
-    clearInterval(pollRef.current)
-
-    if (patient) {
-      await api.stopSession(patient.id).catch(() => {})
-    }
-
-    setScreen('done')
-  }
-
-  // ============================================
-  // SECURE LOGIN SESSION CLEANUP
-  // ============================================
+    let active = true
+    patientApi.lastSession().then(({ data }) => {
+      if (active) setLastSession(data)
+    }).catch(() => { if (active) setError('Could not load session history.') })
+    return () => { active = false }
+  }, [])
 
   function handleLogout() {
-    clearInterval(pollRef.current)
-
-    // Stop an active desktop session if necessary.
-    if (screen === 'active' && patient) {
-      api.stopSession(patient.id).catch(() => {})
-    }
-
-    // Remove saved patient information.
-    localStorage.removeItem('patient')
-
-    // Remove the secure-login access token.
-    sessionStorage.removeItem('patient_token')
-
-    // Return to login.
+    clearPatientSession()
     navigate('/patient', { replace: true })
   }
 
@@ -183,7 +50,7 @@ export default function PatientSession() {
   // ============================================
 
   const exerciseLabel =
-    patient.exercise === 'shoulder_abduction'
+    !patient.has_prescription ? 'Awaiting clinician prescription' : patient.exercise === 'shoulder_abduction'
       ? 'Shoulder Abduction'
       : 'Elbow Flexion'
 
@@ -246,8 +113,7 @@ export default function PatientSession() {
   // READY SCREEN
   // ============================================
 
-  if (screen === 'ready') {
-    return (
+  return (
       <div className="min-h-screen bg-slate-950 text-white">
         {topBar}
 
@@ -329,7 +195,7 @@ export default function PatientSession() {
                 Exercise Instructions
               </h3>
 
-              {steps.map((step, index) => (
+              {patient.has_prescription && steps.map((step, index) => (
                 <div
                   key={index}
                   className="flex gap-3 text-sm text-slate-300"
@@ -382,7 +248,8 @@ export default function PatientSession() {
           <button
             type="button"
             onClick={handleOpenBrowserDemo}
-            className="w-full rounded-2xl bg-emerald-600 px-5 py-4 font-semibold text-white transition-colors hover:bg-emerald-500"
+            disabled={!patient.has_prescription}
+            className="w-full rounded-2xl bg-emerald-600 px-5 py-4 font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
           >
             Open Browser Exercise Demo
           </button>
@@ -391,183 +258,8 @@ export default function PatientSession() {
             Browser camera + simulated AI results
           </p>
 
-          {/* EXISTING DESKTOP AI BUTTON */}
-
-          <div className="mt-8 border-t border-slate-800 pt-6">
-
-            <p className="mb-3 text-sm text-slate-400">
-              Legacy desktop AI session
-            </p>
-
-            <button
-              type="button"
-              onClick={handleStart}
-              disabled={launching}
-              className="w-full rounded-2xl border border-slate-700 bg-slate-800 px-5 py-4 font-medium text-slate-300 hover:bg-slate-700 disabled:opacity-50"
-            >
-              {launching
-                ? 'Launching Desktop AI...'
-                : 'Start Desktop AI Session'}
-            </button>
-
-            <p className="mt-2 text-xs text-slate-500">
-              This existing function launches the Python
-              AI application on the backend computer.
-              It is separate from the browser demo and
-              may not work with the current macOS setup.
-            </p>
-
-          </div>
-
+          <p className="mt-6 text-sm text-slate-400">Real AI and desktop sessions are unavailable pending adapter verification.</p>
         </main>
       </div>
     )
-  }
-
-  // ============================================
-  // ACTIVE DESKTOP SESSION
-  // ============================================
-
-  if (screen === 'active') {
-    return (
-      <div className="min-h-screen bg-slate-950 text-white">
-        {topBar}
-
-        <main className="mx-auto max-w-xl px-6 py-16 text-center">
-
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-blue-900 text-4xl text-blue-300">
-            +
-          </div>
-
-          <h1 className="text-3xl font-bold">
-            Session in Progress
-          </h1>
-
-          <p className="mt-3 text-slate-400">
-            The existing Python AI session is running
-            on the backend computer.
-          </p>
-
-          <div className="mt-8 space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-left">
-
-            <div className="flex justify-between">
-              <span className="text-slate-400">
-                Exercise
-              </span>
-
-              <span>{exerciseLabel}</span>
-            </div>
-
-            <div className="flex justify-between border-t border-slate-800 pt-4">
-              <span className="text-slate-400">
-                Target Repetitions
-              </span>
-
-              <span className="font-bold">
-                {patient.target_reps ?? '—'}
-              </span>
-            </div>
-
-            <div className="flex justify-between border-t border-slate-800 pt-4">
-              <span className="text-slate-400">
-                Status
-              </span>
-
-              <span className="text-emerald-400">
-                Running
-              </span>
-            </div>
-
-          </div>
-
-          <button
-            type="button"
-            onClick={handleStop}
-            className="mt-8 w-full rounded-xl bg-emerald-600 py-4 font-semibold text-white hover:bg-emerald-500"
-          >
-            I've Finished My Reps
-          </button>
-
-          <button
-            type="button"
-            onClick={handleStop}
-            className="mt-3 w-full rounded-xl border border-slate-700 py-3 text-slate-300 hover:bg-slate-800"
-          >
-            Cancel Session
-          </button>
-
-        </main>
-      </div>
-    )
-  }
-
-  // ============================================
-  // FINISHED DESKTOP SESSION
-  // ============================================
-
-  return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      {topBar}
-
-      <main className="mx-auto max-w-md px-6 py-16 text-center">
-
-        <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-emerald-900 text-4xl text-emerald-300">
-          ✓
-        </div>
-
-        <h1 className="text-3xl font-bold">
-          Session Finished
-        </h1>
-
-        <p className="mt-3 text-slate-400">
-          Your desktop session has ended.
-        </p>
-
-        <p className="mt-2 text-sm text-slate-500">
-          Session saving has not been verified.
-          Check your history before assuming results
-          were stored.
-        </p>
-
-        <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-left">
-
-          <div className="flex justify-between">
-            <span className="text-slate-400">
-              Patient ID
-            </span>
-
-            <span className="font-mono">
-              {patient.patient_id}
-            </span>
-          </div>
-
-          <div className="mt-4 flex justify-between border-t border-slate-800 pt-4">
-            <span className="text-slate-400">
-              Exercise
-            </span>
-
-            <span>{exerciseLabel}</span>
-          </div>
-
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setScreen('ready')}
-          className="mt-8 w-full rounded-xl bg-blue-600 py-3 font-semibold hover:bg-blue-500"
-        >
-          Return to Dashboard
-        </button>
-
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="mt-3 w-full rounded-xl border border-slate-700 py-3 text-slate-300 hover:bg-slate-800"
-        >
-          Sign Out
-        </button>
-
-      </main>
-    </div>
-  )
 }
