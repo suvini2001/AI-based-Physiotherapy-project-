@@ -3,63 +3,74 @@ import { useEffect, useRef, useState } from 'react'
 import { createMockAIService } from '../services/mockAIService'
 
 export default function ExerciseSession() {
-  // ==================================================
+  // ===================================================
   // 1. CAMERA REFERENCES
-  // ==================================================
+  // ===================================================
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const requestIdRef = useRef(0)
 
-  // Keeps track of the simulated AI service.
+  // Mock AI service reference.
   const mockServiceRef = useRef(null)
 
-  // ==================================================
-  // 2. REACT STATE
-  // ==================================================
+  // ===================================================
+  // 2. PATIENT PRESCRIPTION
+  // ===================================================
+
+  const [patient] = useState(() => {
+    try {
+      const stored = localStorage.getItem('patient')
+      return stored ? JSON.parse(stored) : null
+    } catch {
+      return null
+    }
+  })
+
+  const prescribedTarget = Number(patient?.target_reps)
+
+  const targetReps =
+    Number.isInteger(prescribedTarget) &&
+    prescribedTarget > 0
+      ? prescribedTarget
+      : 10
+
+  const exerciseName =
+    patient?.exercise === 'shoulder_abduction'
+      ? 'Shoulder Abduction'
+      : 'Elbow Flexion'
+
+  // ===================================================
+  // 3. REACT STATE
+  // ===================================================
 
   // Camera state
   const [cameraStatus, setCameraStatus] = useState('idle')
-  const [error, setError] = useState('')
+  const [cameraError, setCameraError] = useState('')
 
-  // Simulated AI state
+  // Mock AI state
   const [isSimulating, setIsSimulating] = useState(false)
+  const [isCompleted, setIsCompleted] = useState(false)
+
   const [repCount, setRepCount] = useState(0)
   const [jointAngle, setJointAngle] = useState(null)
+
   const [movementState, setMovementState] =
     useState('Not tracking')
 
-  const [feedback, setFeedback] =
-    useState('AI analysis is not connected yet.')
+  const [feedback, setFeedback] = useState(
+    'AI analysis is not connected yet.'
+  )
 
-//   // Temporary target until we integrate prescriptions.
-//   const targetReps = 10
-
-  const [patient] = useState(() => {
-  try {
-    const stored = localStorage.getItem('patient')
-    return stored ? JSON.parse(stored) : null
-  } catch {
-    return null
-  }
-})
-
-const targetReps = patient?.target_reps ?? 10
-
-const exerciseName =
-  patient?.exercise === 'shoulder_abduction'
-    ? 'Shoulder Abduction'
-    : 'Elbow Flexion'
-
-  // ==================================================
-  // 3. CAMERA FUNCTIONS
-  // ==================================================
+  // ===================================================
+  // 4. CAMERA FUNCTIONS
+  // ===================================================
 
   function releaseCamera() {
     if (streamRef.current) {
       streamRef.current
         .getTracks()
-        .forEach((track) => track.stop())
+        .forEach(track => track.stop())
 
       streamRef.current = null
     }
@@ -79,8 +90,10 @@ const exerciseName =
 
     const requestId = ++requestIdRef.current
 
-    setError('')
+    setCameraError('')
     setCameraStatus('starting')
+
+    let stream = null
 
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -89,15 +102,15 @@ const exerciseName =
         )
       }
 
-      const stream =
+      stream =
         await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: false,
         })
 
-      // Stop a camera stream from an outdated request.
+      // A previous request may have been cancelled.
       if (requestId !== requestIdRef.current) {
-        stream.getTracks().forEach((track) => track.stop())
+        stream.getTracks().forEach(track => track.stop())
         return
       }
 
@@ -105,24 +118,30 @@ const exerciseName =
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream
-
         await videoRef.current.play()
       }
 
       if (requestId !== requestIdRef.current) {
-        releaseCamera()
+        // Stop only this request's stream.
+        stream.getTracks().forEach(track => track.stop())
+
+        if (streamRef.current === stream) {
+          streamRef.current = null
+        }
+
         return
       }
 
       setCameraStatus('running')
     } catch (err) {
       if (requestId !== requestIdRef.current) {
+        stream?.getTracks().forEach(track => track.stop())
         return
       }
 
       releaseCamera()
 
-      setError(
+      setCameraError(
         err.message || 'Unable to access the camera.'
       )
 
@@ -131,88 +150,121 @@ const exerciseName =
   }
 
   function stopCamera() {
-    // Invalidate any camera request still in progress.
+    // Invalidate pending camera requests.
     requestIdRef.current += 1
 
     releaseCamera()
-    setError('')
+    setCameraError('')
     setCameraStatus('idle')
   }
 
-  // ==================================================
-  // 4. MOCK AI SIMULATION FUNCTIONS
-  // ==================================================
+  // ===================================================
+  // 5. SIMULATION FUNCTIONS
+  // ===================================================
 
   function startSimulation() {
-    // Prevent multiple simulation intervals.
-    if (mockServiceRef.current) {
-      return
-    }
+    // Prevent multiple simulations running together.
+    if (mockServiceRef.current) return
 
-    // Reset previous simulated measurements.
+    // Reset UI values for a new session.
+    setIsCompleted(false)
     setRepCount(0)
     setJointAngle(null)
     setMovementState('Not tracking')
 
-    const mockService = createMockAIService((result) => {
-      // Update React when new mock data arrives.
-      setRepCount(result.repCount)
-      setJointAngle(result.jointAngle)
-      setMovementState(result.movementState)
-      setFeedback(result.feedback)
-    })
+    setFeedback(
+      'SIMULATION: No real movement analysis'
+    )
 
-    mockServiceRef.current = mockService
+    const service = createMockAIService(
+      result => {
+        setRepCount(result.repCount)
+        setJointAngle(result.jointAngle)
+        setMovementState(result.movementState)
+        setFeedback(result.feedback)
 
-    mockService.start()
+        if (result.completed) {
+          setIsCompleted(true)
+          setIsSimulating(false)
 
+          // The mock service already stopped its interval.
+          mockServiceRef.current = null
+        }
+      },
+      targetReps
+    )
+
+    mockServiceRef.current = service
     setIsSimulating(true)
+
+    service.start()
   }
 
   function stopSimulation() {
-    if (mockServiceRef.current) {
-      mockServiceRef.current.stop()
-      mockServiceRef.current = null
-    }
+    mockServiceRef.current?.stop()
+    mockServiceRef.current = null
 
     setIsSimulating(false)
+    setIsCompleted(false)
 
-    // Reset the UI values.
     setRepCount(0)
     setJointAngle(null)
     setMovementState('Not tracking')
 
-    setFeedback('AI analysis is not connected yet.')
+    setFeedback(
+      'AI analysis is not connected yet.'
+    )
   }
 
-  // ==================================================
-  // 5. CLEANUP
-  // ==================================================
+  function restartSimulation() {
+    stopSimulation()
+
+    // The next click on Start Simulation
+    // begins a fresh simulated session.
+  }
+
+  // ===================================================
+  // 6. CLEANUP
+  // ===================================================
 
   useEffect(() => {
     return () => {
-      // Cancel outstanding camera requests.
+      // Invalidate any camera request still pending.
       requestIdRef.current += 1
 
-      // Release camera hardware.
+      // Release camera.
       streamRef.current
         ?.getTracks()
-        .forEach((track) => track.stop())
+        .forEach(track => track.stop())
 
       streamRef.current = null
 
-      // Stop background mock simulation.
+      // Stop simulation timer.
       mockServiceRef.current?.stop()
       mockServiceRef.current = null
     }
   }, [])
 
-  // ==================================================
-  // 6. USER INTERFACE
-  // ==================================================
+  // ===================================================
+  // 7. DERIVED VALUES
+  // ===================================================
+
+  const progress =
+    Math.min((repCount / targetReps) * 100, 100)
+
+  const simulationStatus = isCompleted
+    ? 'Completed'
+    : isSimulating
+      ? 'Running'
+      : 'Not started'
+
+  // ===================================================
+  // 8. USER INTERFACE
+  // ===================================================
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 text-white">
+
       <div className="mx-auto max-w-4xl space-y-6">
 
         {/* HEADER */}
@@ -228,29 +280,30 @@ const exerciseName =
           <p className="mt-2 text-slate-400">
             Browser camera and simulated AI demonstration
           </p>
+
+          {patient && (
+            <p className="mt-2 text-sm text-slate-500">
+              Patient: {patient.name} ({patient.patient_id})
+            </p>
+          )}
         </header>
 
-        {/* SIMULATION WARNING */}
-        <div
-          className="rounded-xl border border-amber-700
-                     bg-amber-950 p-4"
-        >
+        {/* DEVELOPMENT WARNING */}
+        <div className="rounded-xl border border-amber-700 bg-amber-950 p-4">
           <p className="font-semibold text-amber-300">
             Development / Simulation Mode
           </p>
 
           <p className="mt-1 text-sm text-amber-200">
-            Measurements shown during simulation are fake.
-            The camera is not analyzed and no results
-            are saved as patient assessments.
+            These measurements are simulated.
+            They are not calculated from your camera.
+            No exercise results are uploaded or saved.
           </p>
         </div>
 
         {/* CAMERA PREVIEW */}
-        <div
-          className="overflow-hidden rounded-xl
-                     border border-slate-800 bg-black"
-        >
+        <div className="overflow-hidden rounded-xl border border-slate-800 bg-black">
+
           <video
             ref={videoRef}
             autoPlay
@@ -258,6 +311,7 @@ const exerciseName =
             muted
             className="aspect-video w-full object-contain"
           />
+
         </div>
 
         {/* CAMERA STATUS */}
@@ -274,6 +328,7 @@ const exerciseName =
 
           {/* REPETITIONS */}
           <div className="rounded-xl bg-slate-900 p-5">
+
             <p className="text-sm text-slate-400">
               Repetitions
             </p>
@@ -283,14 +338,13 @@ const exerciseName =
             </p>
 
             <p className="mt-2 text-xs text-slate-500">
-              {isSimulating
-                ? 'Simulated count'
-                : 'Waiting for analysis'}
+              Simulated repetition count
             </p>
           </div>
 
           {/* JOINT ANGLE */}
           <div className="rounded-xl bg-slate-900 p-5">
+
             <p className="text-sm text-slate-400">
               Joint Angle
             </p>
@@ -302,14 +356,13 @@ const exerciseName =
             </p>
 
             <p className="mt-2 text-xs text-slate-500">
-              {isSimulating
-                ? 'Simulated angle'
-                : 'No measurement'}
+              Simulated angle measurement
             </p>
           </div>
 
           {/* MOVEMENT STATE */}
           <div className="rounded-xl bg-slate-900 p-5">
+
             <p className="text-sm text-slate-400">
               Movement State
             </p>
@@ -319,39 +372,103 @@ const exerciseName =
             </p>
 
             <p className="mt-2 text-xs text-slate-500">
-              {isSimulating
-                ? 'Simulated movement'
-                : 'Not tracking'}
+              Simulated movement state
             </p>
           </div>
 
         </div>
 
-        {/* FEEDBACK PANEL */}
+        {/* PROGRESS */}
         <div className="rounded-xl bg-slate-900 p-5">
+
+          <div className="mb-3 flex items-center justify-between">
+
+            <h2 className="font-semibold">
+              Session Progress
+            </h2>
+
+            <span className="text-sm text-slate-400">
+              {Math.round(progress)}%
+            </span>
+
+          </div>
+
+          <div
+            className="h-3 overflow-hidden rounded-full bg-slate-800"
+            role="progressbar"
+            aria-label="Simulated repetition progress"
+            aria-valuemin={0}
+            aria-valuemax={targetReps}
+            aria-valuenow={repCount}
+          >
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+
+          <p className="mt-3 text-sm text-slate-400">
+            Simulation status: {simulationStatus}
+          </p>
+
+        </div>
+
+        {/* FEEDBACK */}
+        <div className="rounded-xl bg-slate-900 p-5">
+
           <h2 className="text-lg font-semibold">
             Movement Feedback
           </h2>
 
-          <p
-            className={`mt-2 text-sm ${
-              isSimulating
-                ? 'text-amber-400'
-                : 'text-slate-400'
-            }`}
-          >
+          <p className="mt-2 text-sm text-amber-400">
             {feedback}
           </p>
+
         </div>
 
-        {/* ERROR DISPLAY */}
-        {error && (
+        {/* COMPLETION MESSAGE */}
+        {isCompleted && (
+
+          <div
+            role="status"
+            className="rounded-xl border border-emerald-700 bg-emerald-950 p-5"
+          >
+
+            <h2 className="text-xl font-bold text-emerald-300">
+              Simulation Complete!
+            </h2>
+
+            <p className="mt-2 text-sm text-emerald-200">
+              The simulated session reached the target
+              of {targetReps} repetitions.
+            </p>
+
+            <p className="mt-2 text-xs text-emerald-400">
+              These are demonstration results only.
+              Nothing has been saved to patient records.
+            </p>
+
+            <button
+              onClick={restartSimulation}
+              className="mt-4 rounded-lg bg-emerald-700 px-5 py-3 font-medium text-white hover:bg-emerald-600"
+            >
+              Reset Simulation
+            </button>
+
+          </div>
+
+        )}
+
+        {/* CAMERA ERRORS */}
+        {cameraError && (
+
           <div
             role="alert"
             className="rounded-lg bg-red-950 p-4 text-red-400"
           >
-            Camera error: {error}
+            Camera error: {cameraError}
           </div>
+
         )}
 
         {/* CAMERA CONTROLS */}
@@ -366,11 +483,10 @@ const exerciseName =
             <button
               onClick={startCamera}
               disabled={
-                cameraStatus === 'starting' ||
-                cameraStatus === 'running'
+                cameraStatus === 'running' ||
+                cameraStatus === 'starting'
               }
-              className="rounded-lg bg-blue-600 px-6 py-3
-                         font-medium disabled:opacity-50"
+              className="rounded-lg bg-blue-600 px-6 py-3 font-medium disabled:opacity-50"
             >
               {cameraStatus === 'starting'
                 ? 'Starting...'
@@ -380,13 +496,13 @@ const exerciseName =
             <button
               onClick={stopCamera}
               disabled={cameraStatus === 'idle'}
-              className="rounded-lg bg-slate-700 px-6 py-3
-                         font-medium disabled:opacity-50"
+              className="rounded-lg bg-slate-700 px-6 py-3 font-medium disabled:opacity-50"
             >
               Stop Camera
             </button>
 
           </div>
+
         </div>
 
         {/* SIMULATION CONTROLS */}
@@ -400,33 +516,35 @@ const exerciseName =
 
             <button
               onClick={startSimulation}
-              disabled={isSimulating}
-              className="rounded-lg bg-emerald-600 px-6 py-3
-                         font-medium disabled:opacity-50"
+              disabled={isSimulating || isCompleted}
+              className="rounded-lg bg-emerald-600 px-6 py-3 font-medium disabled:opacity-50"
             >
               Start Simulation
             </button>
 
             <button
               onClick={stopSimulation}
-              disabled={!isSimulating}
-              className="rounded-lg bg-amber-600 px-6 py-3
-                         font-medium disabled:opacity-50"
+              disabled={!isSimulating && !isCompleted}
+              className="rounded-lg bg-amber-600 px-6 py-3 font-medium disabled:opacity-50"
             >
-              Stop Simulation
+              {isCompleted
+                ? 'Clear Results'
+                : 'Stop Simulation'}
             </button>
 
           </div>
+
         </div>
 
         {/* FOOTER */}
         <p className="border-t border-slate-800 pt-4 text-xs text-slate-500">
           Development preview only. Camera frames remain
-          in the browser. Simulated measurements must not
-          be used for medical decisions.
+          inside the browser. Simulated results are
+          not suitable for clinical decisions.
         </p>
 
       </div>
+
     </div>
   )
 }
