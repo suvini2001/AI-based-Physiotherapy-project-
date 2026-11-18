@@ -29,6 +29,12 @@ export default function App() {
         <Routes>
           {/*Exercise session*/}
           <Route path="/exercise-demo"element={<ExerciseSession />}/>
+          <Route path="/patient/exercise-demo"element={
+            <PatientRoute>
+              <ExerciseSession />
+            </PatientRoute>
+           }
+          />
           <Route path="/camera-test" element={<CameraTest />} />
           {/* Physio portal */}
           <Route path="/login" element={<Login />} />

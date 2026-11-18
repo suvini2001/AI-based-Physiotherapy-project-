@@ -32,8 +32,24 @@ export default function ExerciseSession() {
   const [feedback, setFeedback] =
     useState('AI analysis is not connected yet.')
 
-  // Temporary target until we integrate prescriptions.
-  const targetReps = 10
+//   // Temporary target until we integrate prescriptions.
+//   const targetReps = 10
+
+  const [patient] = useState(() => {
+  try {
+    const stored = localStorage.getItem('patient')
+    return stored ? JSON.parse(stored) : null
+  } catch {
+    return null
+  }
+})
+
+const targetReps = patient?.target_reps ?? 10
+
+const exerciseName =
+  patient?.exercise === 'shoulder_abduction'
+    ? 'Shoulder Abduction'
+    : 'Elbow Flexion'
 
   // ==================================================
   // 3. CAMERA FUNCTIONS
@@ -206,7 +222,7 @@ export default function ExerciseSession() {
           </p>
 
           <h1 className="mt-2 text-3xl font-bold">
-            Elbow Flexion
+            {exerciseName}
           </h1>
 
           <p className="mt-2 text-slate-400">
