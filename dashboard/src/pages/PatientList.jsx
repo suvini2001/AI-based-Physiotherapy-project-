@@ -8,7 +8,7 @@ export default function PatientList() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    getPatients()
+    api.getPatients()
       .then(r => setPatients(r.data))
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -27,7 +27,7 @@ export default function PatientList() {
         {patients.map(p => (
           <div key={p.id}
             className="bg-white rounded-xl border border-gray-200 px-6 py-4 flex items-center justify-between hover:shadow-md transition cursor-pointer"
-            onClick={() => navigate(`/physio/${p.id}/history`)}
+            onClick={() => navigate(`/patients/${p.id}`)}
           >
             <div>
               <p className="font-medium text-gray-800">{p.name}</p>
