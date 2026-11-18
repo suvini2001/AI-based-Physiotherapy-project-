@@ -1,14 +1,30 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+import os
 
-DATABASE_URL = "postgresql+psycopg2://postgres:chamodi1635@localhost:5432/physio_db"
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+
+# Read the database URL from the environment.
+DATABASE_URL = os.environ["DATABASE_URL"]
+
+# Create the connection engine.
 engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Factory for creating database sessions.
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+# Base class for SQLAlchemy database models.
 Base = declarative_base()
 
+
 def get_db():
+    """Provide a database session for each API request."""
     db = SessionLocal()
+
     try:
         yield db
     finally:
