@@ -20,6 +20,31 @@ YAW_WARN_DEG  = 30.0   # amber warning starts here
 YAW_BLOCK_DEG = 50.0   # red block: gate will reject most frames above this
 
 
+FRONT_RATIO = 0.50   # shoulder width / torso length; below this the body is turned away
+                     # (about 0.65-0.75 facing the camera). Preliminary: tune on your clips.
+
+
+def front_view_status(landmarks, size=(640, 480), min_ratio=FRONT_RATIO):
+    """
+    Is the person FACING the camera? Needed for shoulder abduction, where the
+    2D hip-shoulder-elbow angle is only right in a front view.
+
+    landmarks: (33, >=2) normalised landmarks of one frame (NaN = not seen).
+    Returns 'ok', 'turn' (turned away: ask them to face the camera) or 'unknown'.
+    """
+    if landmarks is None:
+        return "unknown"
+    lm = np.asarray(landmarks, dtype=float)
+    pts = lm[[11, 12, 23, 24], :2] * np.array(size, dtype=float)
+    if not np.isfinite(pts).all():
+        return "unknown"
+    l_sh, r_sh, l_hip, r_hip = pts
+    torso = np.linalg.norm((l_sh + r_sh) / 2.0 - (l_hip + r_hip) / 2.0)
+    if torso <= 0:
+        return "unknown"
+    return "ok" if abs(l_sh[0] - r_sh[0]) / torso >= min_ratio else "turn"
+
+
 def draw_yaw_message(frame, yaw_deg, warn_at=YAW_WARN_DEG, block_at=YAW_BLOCK_DEG):
     """Draw a coloured banner on frame in-place.  Returns the status string.
 

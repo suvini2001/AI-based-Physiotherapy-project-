@@ -22,9 +22,17 @@ python -m pytest -q             # all tests should pass
 shoulder height, 2–3 m away, whole upper body in frame. The arm nearest the
 camera is measured: right side to the camera → `--side right`.
 
+**Camera setup (shoulder abduction).** The opposite of the elbow: stand **facing**
+the camera, camera at chest height, 2–3 m away, both shoulders and both hips in
+frame, and raise the arm **out to the side**. The angle is measured in the image
+(hip–shoulder–elbow), so an arm raised forward, toward the camera, reads close to
+0° and is not counted. The session shows "Please face the camera" when the body is
+turned away, and saves `front_view_share` in the session log.
+
 **2. Personal calibration (straight-arm check).** Loads `data/population_curve.json`
 and saves `data/user_calibration.json`. The status must be `ok`; `warn` means the
-camera position is wrong (for example a straight arm reading ~90°).
+camera position is wrong (for example a straight arm reading ~90°). The curve is
+the fallback angle while I_ML warms up (first ~1 s) and when its features are missing.
 
 ```bash
 python capture/calibrate_ui.py --side right
@@ -33,23 +41,30 @@ python capture/calibrate_ui.py --side right
 **3. Exercise session.**
 
 ```bash
-python demo_cv.py --exercise elbow --side right --variant A \
-    --calibration data/user_calibration.json
+python demo_cv.py --exercise elbow --side right
 ```
 
-No `WARNING:` lines should be printed at start-up. Phases: READY (stand still) →
+The angle method comes from `config.yaml` (`angle:`): **I_ML without look-ahead**,
+`data/iml_nolook_rehab24_exp_torso.txt`, with the curve in `data/user_calibration.json`
+as fallback. The HUD shows `I_ML (ML)` once the model is running, `I_ML (curve)` during
+the fallback. If the model file is missing the session runs with variant A + curve and
+prints a warning. `--variant A` (or `B`, `C`) and `--iml-model` override the config;
+the session log records the method and the share of frames each method produced.
+
+No other `WARNING:` lines should be printed at start-up. Phases: READY (stand still) →
 CALIB (move through your full range; FSM thresholds adapt to you) → COUNT.
 Press `q` to finish; the session is saved to `--session-out` (default `session_log.json`).
 
-Angle variants: `A` 2D pixel angle (used with the calibration curve), `B` MediaPipe
-3D world landmarks, `C` yaw-corrected 3D.
+Angle variants: `ML` learned correction (default), `A` 2D pixel angle (used with the
+calibration curve), `B` MediaPipe 3D world landmarks, `C` yaw-corrected 3D.
 
 ## How each part works
 
 | Part | Files | Method |
 |---|---|---|
 | Pose + cleaning | `pose/`, `visibility.py`, `vision/gap_fill.py`, `filters.py` | Visibility mask 0.70, gap fill ≤ 5 frames, median-5 + One Euro filter |
-| Angle calibration | `calibration.py`, `scripts/fit_calibration.py`, `capture/calibrate_ui.py` | Monotonic population curve (raw 2D → mocap angle), profile view, fitted on REHAB24-6, LOPO MAE 20.1° → 16.3° |
+| Angle (default) | `iml_live.py`, `config.yaml` | I_ML without look-ahead: LightGBM (200 × 31) on 14 per-frame features built frame by frame (`FeatureStream`, causal filter); bone lengths and scale from all frames so far, in torso lengths. Trained on REHAB24-6 streaming features; side-on LOSO 11.5° vs 15.8° for the curve (`04b_expanding_compare.ipynb`) |
+| Angle fallback | `calibration.py`, `scripts/fit_calibration.py`, `capture/calibrate_ui.py` | Monotonic population curve (raw 2D → mocap angle), camera-relative side-on views of REHAB24-6, LOPO MAE 23.3° → 15.8° |
 | Rep counting | `exercise_state.py` | 4-state FSM per exercise, thresholds tuned from the CALIB phase |
 | Posture rules | `assessment/rules.py` | Shoulder elevation, trunk lean, asymmetry (ideas adapted from Pavlikov et al. 2026; thresholds preliminary), ROM, speed |
 | DTW score | `assessment/dtw.py`, `templates/` | Labchurat et al. 2026: Z = (d − μ)/σ from healthy reps, score = 100 / max(Z, 1) |
@@ -72,7 +87,8 @@ Participant recordings are git-ignored. See `data/README.md` for dataset licence
 
 ## Status and known limits
 
-- Calibration curve: REHAB24-6 profile data covers truth angles 64–175°; below 64° the curve is extrapolated. To be extended with Fit3D biceps curls and checked with a goniometer on our own setup.
+- Angle: I_ML (exp_torso) is the default; side-on LOSO error 11.5° vs 15.8° for the curve, 4.4° per-person gain (13/16 recordings, p = 0.051). On an unseen dataset the gain shrinks (REHAB24-6 → Fit3D), so it still has to be confirmed with a goniometer on our own webcam.
+- Fallback curve: camera-relative side-on REHAB24-6 data covers truth angles 49–173°; below 49° it is extrapolated. Fit3D has no side-on camera, so it could not extend this range.
 - DTW templates and rule thresholds still need real recordings.
 - Benchmark notebooks: `benchmark_3d_world.ipynb` (angle variants, learned correction), `rehab24_validation_v4.ipynb`.
 

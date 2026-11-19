@@ -1,0 +1,39 @@
+{
+ "features": [
+  "angle_2d",
+  "angle_world",
+  "angle_lift",
+  "plan_upper",
+  "plan_fore",
+  "plan_min",
+  "len_upper",
+  "len_fore",
+  "vis_sh",
+  "vis_el",
+  "vis_wr",
+  "wz_sh_el",
+  "wz_el_wr",
+  "torso_ratio"
+ ],
+ "feature_stream": {
+  "session": "expanding",
+  "scale": "torso"
+ },
+ "params": {
+  "objective": "l1",
+  "n_estimators": 200,
+  "num_leaves": 31,
+  "learning_rate": 0.09,
+  "min_child_samples": 80,
+  "subsample": 0.8,
+  "subsample_freq": 1,
+  "colsample_bytree": 0.8,
+  "reg_lambda": 1.0,
+  "verbosity": -1
+ },
+ "trained_on": "REHAB24-6 only (CC BY-NC), streaming features",
+ "cv": {
+  "E3_all_views_deg": 9.54,
+  "E3_profile_deg": 11.46
+ }
+}

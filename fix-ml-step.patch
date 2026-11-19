@@ -1,0 +1,54 @@
+diff --git a/demo_cv.py b/demo_cv.py
+index 9bcbbb6..f9ce77a 100644
+--- a/demo_cv.py
++++ b/demo_cv.py
+@@ -75,10 +75,10 @@ class AnglePipeline:
+ 
+     def step(self, norm, world, fps=None):
+         """norm, world: (33, 4) for one frame. Returns (clean_norm, angle_or_None).
+-        ml = self.iml.step(norm, world) if self.iml is not None else None
+         fps: the real frame rate right now (live camera). The smoothing is tuned in
+         seconds, so if it is told 30 FPS while frames arrive at 7 it flattens the
+         top and bottom of every rep."""
++        ml = self.iml.step(norm, world) if self.iml is not None else None
+         if fps:
+             self.smoother.fs = float(fps)
+         masked = mask_low_visibility(norm[None], self.thr)[0]
+diff --git a/tests/test_angle_method.py b/tests/test_angle_method.py
+index 5cf1dd1..f5b1408 100644
+--- a/tests/test_angle_method.py
++++ b/tests/test_angle_method.py
+@@ -55,3 +55,33 @@ def test_fallback_curve_from_config(resolve, tmp_path):
+ def test_no_config_keeps_old_default(resolve):
+     v, _, _ = resolve(None, None, None, None)
+     assert v == "A"
++
++
++def test_pipeline_step_runs_with_ml_and_falls_back_first(resolve, tmp_path):
++    """The live loop: AnglePipeline.step must run with variant ML, use the curve/raw path
++    for the first frames and the model once the feature stream is warm."""
++    import json
++    import numpy as np
++    lgb = pytest.importorskip("lightgbm")
++    sys.path.insert(0, os.path.join(ROOT, "tests"))
++    from test_iml_live import synthetic, KEEP
++    from iml_live import stream_features
++    from features import FEATURE_NAMES
++    import demo_cv
++    lm, wd = synthetic(n=120)
++    F = stream_features(lm, wd, "right", (640, 480), 30.0, session="expanding", scale="torso")
++    ok = np.isfinite(F[:, 0]); cols = [FEATURE_NAMES.index(k) for k in KEEP]
++    m = lgb.LGBMRegressor(n_estimators=10, num_leaves=7, min_child_samples=5, verbosity=-1)
++    m.fit(F[ok][:, cols], F[ok, 0])
++    path = str(tmp_path / "iml.txt"); m.booster_.save_model(path)
++    json.dump({"features": KEEP, "feature_stream": {"session": "expanding", "scale": "torso"}},
++              open(path + ".json", "w"))
++    pipe = demo_cv.AnglePipeline((12, 14, 16), "ML", (640, 480), 30.0, 0.7, 5, None,
++                                 side="right", iml_model=path)
++    sources, angles = [], []
++    for n, w in zip(lm, wd):
++        _, a = pipe.step(n, w, fps=30.0)
++        sources.append(pipe.last_source); angles.append(a)
++    assert sources[0] == "raw" and sources[-1] == "ML"
++    assert pipe.source_counts["ML"] > 60
++    assert all(a is None or 0 <= a <= 180 for a in angles)

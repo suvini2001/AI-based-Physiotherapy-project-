@@ -178,7 +178,11 @@ def test_shoulder_fsm_calibration_and_scoring_rom_check():
 
 def test_extending_to_flexing_reversal_flags_rep_completed():
     fsm = ElbowFSM()
-    signal = [162.0] * 5 + list(np.linspace(162, 40, 20)) + [60.0, 90.0, 130.0, 120.0]
+    # Direction is measured over DIRECTION_WINDOW_S (0.3 s), so the turn-back has
+    # to last that long. The old signal jumped 30-40 degrees per frame (about
+    # 1000 deg/s) and reversed for a single frame, which no arm can do.
+    signal = ([162.0] * 5 + list(np.linspace(162, 40, 20))
+              + list(np.linspace(40, 130, 20)) + list(np.linspace(130, 95, 12)))
     completed = []
     for i, a in enumerate(signal):
         state, rep_done = fsm.update(float(a), i / 30.0)
@@ -188,3 +192,89 @@ def test_extending_to_flexing_reversal_flags_rep_completed():
     assert completed[0][1] == "FLEXING"
     assert fsm.rep_count == 1
 
+
+
+# ── ShoulderFSM: half-lowered, limited range, slow, noisy ────────────
+def shoulder_reps(tops, bottoms, rest=8.0, fps=30, half_s=1.0, rest_s=0.8):
+    """Raise to tops[i], lower to bottoms[i] (the last one should be `rest`)."""
+    n = int(half_s * fps)
+    sig, low = [rest] * int(rest_s * fps), rest
+    for top, bottom in zip(tops, bottoms):
+        sig += list(np.linspace(low, top, n)) + list(np.linspace(top, bottom, n))
+        low = bottom
+    return np.array(sig + [rest] * int(rest_s * fps))
+
+
+def test_shoulder_half_lowered_reraise_is_not_lost():
+    """4 raises, lowering only to 45 between them: every raise is a rep, none vanish."""
+    sig = shoulder_reps([90, 90, 90, 90], [45, 45, 45, 8])
+    fsm = ShoulderFSM()                 # no calibration: no range rule, all four count
+    run_fsm(fsm, sig)
+    assert fsm.rep_count == 4
+    assert fsm.state == "RESTING"       # not stuck in LOWERING
+
+
+def test_shoulder_half_lowered_is_flagged_when_calibrated():
+    """With a calibrated range, a raise that starts half-lowered is reported, not dropped."""
+    fsm = ShoulderFSM()
+    assert fsm.calibrate_from_signal(make_shoulder_signal(n_reps=1))
+    run_fsm(fsm, shoulder_reps([90, 90, 90, 90], [45, 45, 45, 8]))
+    assert fsm.rep_count + len(fsm.incomplete_attempts) == 4
+    assert fsm.rep_count >= 1
+    assert all(a["reason"] == "lower" for a in fsm.incomplete_attempts)
+
+
+def test_shoulder_reversal_flags_rep_completed():
+    fsm = ShoulderFSM()
+    done = []
+    for i, a in enumerate(shoulder_reps([90, 90], [45, 8])):
+        state, rep_done = fsm.update(float(a), i / 30.0)
+        if rep_done:
+            done.append(state)
+    assert done == ["RAISING", "RESTING"]
+
+
+def test_shoulder_wobble_while_lowering_does_not_split_the_rep():
+    """A 6 degree bounce on the way down is not a new raise."""
+    n = 30
+    sig = ([8.0] * 24 + list(np.linspace(8, 90, n)) + list(np.linspace(90, 50, 15))
+           + list(np.linspace(50, 56, 6)) + list(np.linspace(56, 8, 20)) + [8.0] * 24)
+    fsm = ShoulderFSM()
+    run_fsm(fsm, sig)
+    assert fsm.rep_count == 1
+    assert fsm.incomplete_attempts == []
+
+
+def test_shoulder_limited_range_counts_after_calibration():
+    """A patient who only reaches 60 degrees: calibrated on their own range, reps count."""
+    limited = shoulder_reps([60] * 4, [15] * 4, rest=15.0)
+    fsm = ShoulderFSM()
+    assert fsm.calibrate_from_signal(shoulder_reps([60], [15], rest=15.0))
+    run_fsm(fsm, limited)
+    assert fsm.rep_count == 4
+    assert fsm.incomplete_attempts == []
+
+
+def test_shoulder_limited_range_without_calibration_is_reported_not_silent():
+    """Known limit: the fixed 75 degree default counts nothing for a 60 degree patient,
+    but every raise must still show up as an incomplete attempt."""
+    fsm = ShoulderFSM()
+    run_fsm(fsm, shoulder_reps([60] * 4, [15] * 4, rest=15.0))
+    assert fsm.rep_count == 0
+    assert len(fsm.incomplete_attempts) == 4
+
+
+def test_shoulder_slow_reps_on_a_slow_camera():
+    """4 s up, 4 s down at 7 FPS."""
+    sig = shoulder_reps([90] * 3, [8] * 3, fps=7, half_s=4.0)
+    fsm = ShoulderFSM()
+    run_fsm(fsm, sig, fps=7)
+    assert fsm.rep_count == 3
+
+
+def test_shoulder_noisy_signal_counts_correctly():
+    rng = np.random.default_rng(0)
+    sig = make_shoulder_signal(n_reps=5)
+    fsm = ShoulderFSM()
+    run_fsm(fsm, sig + rng.normal(0, 1.5, len(sig)))
+    assert fsm.rep_count == 5

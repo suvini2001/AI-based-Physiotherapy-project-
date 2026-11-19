@@ -4,6 +4,7 @@ __pycache__/
 data/*.mp4
 dataset
 results
+node_modules/
 
 # Participant & volunteer session recordings (privacy & research ethics)
 session_log.json
@@ -17,3 +18,8 @@ data/fit3d/
 data/calib_pairs_fit3d.npz
 data/calib_pairs_all.npz
 data/population_curve_fit3d.json
+fit3d dataset
+mlflow.db
+mlruns/
+mlartifacts/
+.venv-mlflow/

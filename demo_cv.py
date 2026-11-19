@@ -1,18 +1,20 @@
 """demo_cv.py - webcam or clip -> landmarks -> clean -> angle -> overlay.
-  python demo_cv.py --exercise elbow --side right          (live webcam, variant A = old 2D angle)
+  python demo_cv.py --exercise elbow --side right          (live webcam, angle method from config.yaml: I_ML exp_torso)
+  python demo_cv.py --variant A                             (old 2D angle + calibration curve)
   python demo_cv.py --variant B                             (3D angle from world landmarks)
   python demo_cv.py --calibration data/user_calibration.json
   python demo_cv.py --source data/elbow_A_laptop.mp4        (replay a clip)
+  python demo_cv.py --variant ML                            (learned I_ML angle, curve as fallback)
   python demo_cv.py --no-overlay                            (FPS without drawing)
 Commit 1 (Person A): the loop, variants A and B, calibration. Commit 2 (Person B): yaw message, variant C, gate."""
-import argparse, os, sys, time
+import argparse, json, os, sys, time
 from collections import deque
 import cv2
 import numpy as np
 import assessment.scorer as scorer
+from assessment.rules import ROM_FAULT, ROM_TOLERANCE
 import audio_feedback
-from vision.overlay import draw_feedback, draw_session_summary
-
+from vision.overlay import draw_arm, draw_hud, draw_session_summary
 from capture.camera import FrameSource, FpsCounter
 from pose.landmarks import LandmarkExtractor
 from visibility import mask_low_visibility, load_config
@@ -24,27 +26,39 @@ from vision.gap_fill import fill_gaps
 from vision.overlay import JOINTS, draw_angle, draw_skeleton, put_big_text
 from exercise_state import ElbowFSM, ShoulderFSM, save_session
 from session_packager import post_session, flush_queue, push_live_frame
+from capture.view_check import front_view_status
+from vision.overlay import JOINTS, put_big_text
+from exercise_state import (ElbowFSM, ShoulderFSM, save_session,
+                            calibration_cycle_complete)
 
 WINDOW = 15            # recent frames kept for gap filling (about 0.5 s)
 SPIKE_WINDOW = 5       # median of the last 5 angles removes one-frame spikes
-VARIANTS = ["A", "B", "C"]  # Person B adds "C" in the second commit
+VARIANTS = ["A", "B", "C", "ML"]  # ML = learned correction (iml_live.py), falls back to A + curve
+DISPLAY_W = 960        # the window is drawn at this width so text stays sharp
+WINDOW_TITLE = "Physio session (press Q to finish)"
 
 
 class AnglePipeline:
     """One frame in, one cleaned angle out. Separate from the window so it can be tested without a camera."""
 
-    def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None, side="right"):
+    def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None, side="right",
+                 iml_model=None):
         self.joint, self.variant, self.size, self.side = joint, variant, size, side
         self.thr, self.max_gap, self.calibration = thr, max_gap, calibration
         self.win_norm, self.win_world = deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.recent = deque(maxlen=SPIKE_WINDOW)
         self.smoother = OneEuroFilter(fs=fps)
+        self.iml, self.last_source = None, None
+        self.source_counts = {"ML": 0, "curve": 0, "raw": 0}   # which method produced each angle
+        if variant == "ML":
+            from iml_live import IMLStream
+            self.iml = IMLStream(iml_model, side=side, size=size, fps=fps, threshold=thr)
 
     def raw_angle(self, clean_norm, clean_world):
         pts_n = [clean_norm[i] for i in self.joint]
         if any(np.isnan(p[:3]).any() for p in pts_n):
             return None
-        if self.variant == "A":                               # old way: 2D pixels
+        if self.variant in ("A", "ML"):                               # old way: 2D pixels
             px = [np.array([p[0] * self.size[0], p[1] * self.size[1]]) for p in pts_n]
             return float(angle(*px))
         if self.variant == "B":                               # 3D world landmarks, metres
@@ -62,9 +76,15 @@ class AnglePipeline:
             val = float(res[0]) if hasattr(res, "__len__") else float(res)
             return val if np.isfinite(val) else None
         raise ValueError(f"unknown variant {self.variant}")
-    
-    def step(self, norm, world):
-        """norm, world: (33, 4) for one frame. Returns (clean_norm, angle_or_None)."""
+
+    def step(self, norm, world, fps=None):
+        """norm, world: (33, 4) for one frame. Returns (clean_norm, angle_or_None).
+        fps: the real frame rate right now (live camera). The smoothing is tuned in
+        seconds, so if it is told 30 FPS while frames arrive at 7 it flattens the
+        top and bottom of every rep."""
+        ml = self.iml.step(norm, world) if self.iml is not None else None
+        if fps:
+            self.smoother.fs = float(fps)
         masked = mask_low_visibility(norm[None], self.thr)[0]
         self.win_norm.append(masked)
         self.win_world.append(mask_world_like(world[None], masked[None])[0])
@@ -81,22 +101,63 @@ class AnglePipeline:
             if not gate_val:
                 raw = None
 
+        if ml is not None:                      # I_ML has its own causal filter; no curve on top
+            self.last_source = "ML"
+            self.source_counts["ML"] += 1
+            if raw is not None:
+                self.recent.append(raw)         # keep the fallback filters warm
+            return clean, ml
         if raw is None:
             return clean, None
         self.recent.append(raw)
-        ang = self.smoother(float(np.median(self.recent)))
+        # spike filter: 5 frames at normal speed, 3 on a slow camera (5 would be ~0.7 s)
+        k = SPIKE_WINDOW if self.smoother.fs >= 20 else 3
+        ang = self.smoother(float(np.median(list(self.recent)[-k:])))
         ang = min(max(ang, 0.0), 180.0)
         if self.calibration is not None:
             ang = float(apply_calibration(ang, self.calibration))
+        self.last_source = "curve" if self.calibration is not None else "raw"
+        self.source_counts[self.last_source] += 1
         return clean, ang
+
+
+def resolve_angle_method(variant, iml_model, calibration, angle_cfg, exercise="elbow"):
+    """Command-line values win; otherwise config.yaml `angle:` decides.
+    A missing I_ML model never stops a session: it falls back to variant A + curve.
+    I_ML and the population curve are ELBOW models: any other exercise uses the plain
+    2D angle of its own joint (variant A) with no curve."""
+    angle_cfg = angle_cfg or {}
+    if exercise != "elbow":
+        if variant == "ML" or (variant is None and angle_cfg.get("method") == "ML"):
+            print(f"Angle: {exercise} uses the 2D angle (variant A); I_ML is trained for the elbow only")
+        if variant == "C":
+            print(f"WARNING: variant C is the ELBOW yaw correction - {exercise} uses variant A instead")
+        variant = "A" if variant in (None, "ML", "C") else variant
+        if calibration is not None:
+            print(f"WARNING: {calibration} is an elbow curve - not applied to {exercise}")
+        return variant, iml_model or angle_cfg.get("iml_model"), None
+    variant = variant or angle_cfg.get("method", "A")
+    iml_model = iml_model or angle_cfg.get("iml_model", "data/iml_nolook_rehab24_exp_torso.txt")
+    if variant == "ML" and calibration is None:
+        fb = angle_cfg.get("fallback_calibration")
+        calibration = fb if fb and os.path.exists(fb) else None
+    if variant == "ML" and not (os.path.exists(iml_model) and os.path.exists(iml_model + ".json")):
+        print(f"WARNING: I_ML model {iml_model} (+ .json) not found - using variant A + curve instead")
+        variant = "A"
+    return variant, iml_model, calibration
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source",      default="0")
     ap.add_argument("--exercise",    choices=list(JOINTS.keys()), default="elbow")
     ap.add_argument("--side",        choices=["left", "right"],   default="right")
-    ap.add_argument("--variant",     choices=VARIANTS,            default="A")
-    ap.add_argument("--calibration", default=None)
+    ap.add_argument("--variant",     choices=VARIANTS,            default=None,
+                    help="angle method; default from config.yaml (angle.method)")
+    ap.add_argument("--calibration", default=None,
+                    help="curve file; with --variant ML it is the fallback (default from config.yaml)")
+    ap.add_argument("--iml-model",   default=None,
+                    help="LightGBM model for --variant ML (default from config.yaml)")
     ap.add_argument("--width",       type=int, default=640)
     ap.add_argument("--height",      type=int, default=480)
     ap.add_argument("--mirror",      action="store_true")
@@ -108,8 +169,13 @@ def main():
 
     cfg          = load_config()
     thr, max_gap = cfg["visibility_threshold"], cfg["max_gap_frames"]
+    args.variant, args.iml_model, args.calibration = resolve_angle_method(
+        args.variant, args.iml_model, args.calibration, cfg.get("angle"), exercise=args.exercise)
     calibration  = load_params(args.calibration) if args.calibration else None
-    for line in calibration_warnings(calibration, args.variant):
+    if args.variant == "ML":
+        print(f"Angle: I_ML {os.path.basename(args.iml_model)}"
+              + (f", curve fallback {args.calibration}" if calibration else ", no curve fallback (raw 2D for the first ~1 s)"))
+    for line in calibration_warnings(calibration, "A" if args.variant == "ML" else args.variant):
         print("WARNING:", line)
     source       = int(args.source) if args.source.isdigit() else args.source
     src          = FrameSource(source, args.width, args.height)
@@ -117,11 +183,14 @@ def main():
     extractor    = LandmarkExtractor()
     joint        = JOINTS[args.exercise][args.side]
     pipe         = AnglePipeline(joint, args.variant, size,
-                                 src.fps(), thr, max_gap, calibration, side=args.side)
+                                 src.fps(), thr, max_gap, calibration, side=args.side,
+                                 iml_model=args.iml_model)
 
     # ── scorer ──────────────────────────────────────────────────────
-    exercise_name = ("elbow_flexion" if args.exercise == "elbow"
-                     else "shoulder_abduction")
+    exercise_name = ("elbow_flexion_left" if args.exercise == "elbow" and args.side == "left"
+        else "elbow_flexion" if args.exercise == "elbow"
+        else "shoulder_abduction_right" if args.exercise == "shoulder" and args.side == "right"
+        else "shoulder_abduction")
     template_path = os.path.join("templates", f"{exercise_name}.json")
     if not os.path.exists(template_path):
         template_path = "template.json"
@@ -158,22 +227,37 @@ def main():
         _feedback_rep   = rep
         _feedback_timer = time.perf_counter() + 2.0
 
+    # ── shallow attempt callback (not counted as a rep) ─────────────
+    def on_attempt_incomplete(attempt):
+        nonlocal _feedback_rep, _feedback_timer
+        msg = ROM_FAULT[attempt.get("reason") or fsm.rom_check_params()["kind"]]
+        print(f"  Not counted | ROM {attempt['rom']:.0f}°  "
+              f"(max {attempt['max_angle']:.0f}° → min {attempt['min_angle']:.0f}°)  "
+              f"{msg}")
+        audio_feedback.speak(msg.split('—')[-1].strip(), priority=True)
+        _feedback_rep   = {'faults': [msg], 'quality_score': 0, 'counted': False}
+        _feedback_timer = time.perf_counter() + 2.0
+
     # ── FSM ─────────────────────────────────────────────────────────
     if args.exercise == "shoulder":
-        fsm = ShoulderFSM(rep_callback=on_rep_complete)
+        fsm = ShoulderFSM(rep_callback=on_rep_complete,
+                          attempt_callback=on_attempt_incomplete)
     else:
-        fsm = ElbowFSM(rep_callback=on_rep_complete)
+        fsm = ElbowFSM(rep_callback=on_rep_complete,
+                       attempt_callback=on_attempt_incomplete)
     rom_params = fsm.rom_check_params()
 
     # ── session timing ───────────────────────────────────────────────
     # Phase 1: READY    0  → READY_S        stand still, get in position
-    # Phase 2: CALIB    READY_S → READY_S+CALIBRATION_S   move arm
-    # Phase 3: COUNT    READY_S+CALIBRATION_S onwards      reps counted
+    # Phase 2: CALIB    until one full out-and-back movement is seen
+    #                   (gives up after CALIBRATION_S seconds)
+    # Phase 3: COUNT    reps counted
     READY_S       = 3.0
-    CALIBRATION_S = 5.0
-    CALIB_END_S   = READY_S + CALIBRATION_S   # = 8.0
+    CALIBRATION_S = 15.0   # longest the CALIB phase waits for one full movement
 
     calibration_angles = []
+    calib_failed       = False
+    remaining          = READY_S   # seconds left in the READY / CALIB phase
     phase              = "READY"   # READY → CALIB → COUNT
     _announced_ready   = False
     _announced_calib   = False
@@ -185,6 +269,8 @@ def main():
     t_start = time.perf_counter()
     is_file = isinstance(source, str)
     state   = fsm.state
+    fps     = 0.0          # measured frame rate, updated every frame
+    view_frames, turned_since, view_warning, last_view_speech = {}, None, False, -1e9
 
     while True:
         t0        = time.perf_counter()
@@ -196,7 +282,9 @@ def main():
         norm, world = extractor.process_with_world(frame)
 
         t2         = time.perf_counter()
-        clean, ang = pipe.step(norm, world)
+        # live camera: tell the smoother the measured frame rate (a clip keeps its own)
+        live_fps   = min(max(fps, 3.0), 60.0) if (fps and not is_file) else None
+        clean, ang = pipe.step(norm, world, fps=live_fps)
 
         timestamp = (n / src.fps()) if is_file else (time.perf_counter() - t_start)
 
@@ -205,18 +293,15 @@ def main():
             # announce once
             if not _announced_ready and timestamp > 0.1:
                 audio_feedback.speak(
+                    "Get ready. Stand still, facing the camera, with your whole upper body in view."
+                    if args.exercise == "shoulder" else
                     "Get ready. Stand still and face the camera.",
                     priority=True)
                 _announced_ready = True
 
+            remaining = max(0.0, READY_S - timestamp)
             if timestamp >= READY_S:
                 phase = "CALIB"
-
-            if not args.no_overlay:
-                remaining = max(0.0, READY_S - timestamp)
-                put_big_text(frame,
-                    f"Get ready  {remaining:.0f}s — stand still",
-                    (20, 140), 0.7, (0, 200, 255))
 
         elif phase == "CALIB":
             # announce once
@@ -230,17 +315,22 @@ def main():
                 calibration_angles.append(ang)
 
             cal_elapsed = timestamp - READY_S
-            if cal_elapsed >= CALIBRATION_S:
-                fsm.calibrate_from_signal(calibration_angles, fps=src.fps())
+            if (calibration_cycle_complete(calibration_angles)
+                    or cal_elapsed >= CALIBRATION_S):
+                calibrated = fsm.calibrate_from_signal(calibration_angles, fps=src.fps())
                 rom_params = fsm.rom_check_params()
                 phase      = "COUNT"
-                print("Thresholds updated from calibration")
+                if calibrated:
+                    print("Thresholds updated from calibration")
+                else:
+                    calib_failed = True
+                    print(f"WARNING: auto-calibration failed "
+                          f"({len(calibration_angles)} angle samples in {CALIBRATION_S:.0f}s, "
+                          f"no full bend-and-straighten seen). Using default thresholds: "
+                          f"incomplete reps will NOT be flagged. Restart and try again.")
+                    audio_feedback.speak("Calibration failed. Please restart.", priority=True)
 
-            if not args.no_overlay:
-                remaining = max(0.0, CALIBRATION_S - cal_elapsed)
-                put_big_text(frame,
-                    f"Calibrating  {remaining:.0f}s — move full range",
-                    (20, 140), 0.6, (0, 200, 255))
+            remaining = max(0.0, CALIBRATION_S - cal_elapsed)
 
         elif phase == "COUNT":
             # announce once
@@ -254,14 +344,15 @@ def main():
             state, _ = fsm.update(ang, timestamp, landmarks=clean)
             push_live_frame(state, ang, fsm.rep_count, timestamp)
 
-            if not args.no_overlay:
-                put_big_text(frame, f"Reps: {fsm.rep_count}",
-                             (20, 140), 0.9, (0, 255, 0))
-                put_big_text(frame, f"State: {state}",
-                             (20, 170), 0.7, (255, 200, 0))
-                if ang is not None:
-                    put_big_text(frame, f"Angle: {ang:.0f}°",
-                                 (20, 200), 0.8, (255, 255, 255))
+        # shoulder abduction is only measured correctly facing the camera
+        if args.exercise == "shoulder":
+            view = front_view_status(clean, size)
+            view_frames[view] = view_frames.get(view, 0) + 1
+            turned_since = (turned_since or timestamp) if view == "turn" else None
+            view_warning = turned_since is not None and timestamp - turned_since >= 1.0
+            if view_warning and timestamp - last_view_speech >= 8.0:
+                audio_feedback.speak("Please face the camera.", priority=True)
+                last_view_speech = timestamp
 
         t3  = time.perf_counter()
         fps = counter.tick()
@@ -269,25 +360,47 @@ def main():
         if not args.no_overlay:
             if args.mirror:
                 frame = cv2.flip(frame, 1)
-            draw_skeleton(frame, clean, mirror=args.mirror)
-            draw_angle(frame, clean, joint, ang, mirror=args.mirror)
+            # enlarge first, then draw, so text and lines are sharp
+            if frame.shape[1] != DISPLAY_W:
+                disp_h = int(round(frame.shape[0] * DISPLAY_W / frame.shape[1]))
+                frame = cv2.resize(frame, (DISPLAY_W, disp_h),
+                                   interpolation=cv2.INTER_LINEAR)
+            draw_arm(frame, clean, joint, ang, mirror=args.mirror)
 
-            if _feedback_rep and time.perf_counter() < _feedback_timer:
-                draw_feedback(frame,
-                              _feedback_rep.get('faults', []),
-                              _feedback_rep.get('quality_score', 50),
-                              landmarks=clean,
-                              h=frame.shape[0],
-                              w=frame.shape[1])
+            # the angle the arm has to reach for a rep to count
+            rom_params = fsm.rom_check_params()      # the goal follows the best rep
+            goal, kind = None, rom_params.get("kind", "flex")
+            if phase == "COUNT":
+                if kind == "flex":
+                    goal = min(fsm.FLEX_THRESH, rom_params["target"] + ROM_TOLERANCE)
+                else:
+                    goal = max(fsm.RAISE_THRESH, rom_params["target"] - ROM_TOLERANCE)
 
-            label = (f"variant {args.variant}" +
-                     (" + calibrated" if calibration else ""))
-            put_big_text(frame, label, (20, 100), 0.8, (255, 255, 255))
-
-        put_big_text(frame, f"FPS {fps:.0f}", (20, 60), 1.4, (255, 255, 0))
+            showing = _feedback_rep and time.perf_counter() < _feedback_timer
+            draw_hud(frame, {
+                "title": (f"{exercise_name.replace('_', ' ').upper()}  |  "
+                          f"{args.side.upper()} ARM  |  "
+                          + (f"I_ML ({pipe.last_source or '...'})" if args.variant == "ML"
+                             else args.variant + ("+cal" if calibration else ""))),
+                "phase":       phase,
+                "remaining":   remaining,
+                "phase_total": READY_S if phase == "READY" else CALIBRATION_S,
+                "reps":        fsm.rep_count,
+                "incomplete":  len(fsm.incomplete_attempts),
+                "angle":       ang,
+                "state":       state,
+                "target":      goal,
+                "target_kind": kind,
+                "feedback":    _feedback_rep if showing else None,
+                "notice":      ("Please face the camera" if view_warning
+                                else "Calibration failed: default goal" if calib_failed else None),
+                "fps":         fps,
+            }, pose=clean, mirror=args.mirror)
+        else:
+            put_big_text(frame, f"FPS {fps:.0f}", (20, 60), 1.4, (255, 255, 0))
         t4 = time.perf_counter()
 
-        cv2.imshow("demo_cv (press q to quit)", frame)
+        cv2.imshow(WINDOW_TITLE, frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
@@ -299,25 +412,52 @@ def main():
     session_duration = time.perf_counter() - t_start
     fsm.flush(session_duration)
 
-    if fsm.rep_count > 0:
-        exercise_name = ("elbow_flexion" if args.exercise == "elbow"
-                         else "shoulder_abduction")
-        summary = scorer.session_summary(fsm.reps)
+    if fsm.rep_count > 0 or fsm.incomplete_attempts:
+        # incomplete attempts count against the session (quality 0 each)
+        summary = scorer.session_summary(fsm.reps, fsm.incomplete_attempts)
         print("\nSession summary:", fsm.summary())
-        print("Quality summary:", summary)
-
+        s = summary
+        print(f"\nReps completed : {s.get('n_reps', 0)}")
+        print(f"  Good reps    : {s.get('n_clean_reps', 0)}  ({round(100*s.get('n_clean_reps',0)/max(s.get('n_reps',1),1))}%)")
+        print(f"  Needs work   : {s.get('n_needs_work', 0)}  ({round(100*s.get('n_needs_work',0)/max(s.get('n_reps',1),1))}%)")
+        print(f"Not counted    : {s.get('n_incomplete', 0)}")
+        print(f"Session quality: {s.get('mean_quality', 0):.0f}%  Grade {s.get('grade', '?')}")
+        if s.get('top_fault'):
+            print(f"Top fault      : {s.get('top_fault')}")
+        if s.get('fault_counts'):
+            print("Fault breakdown:")
+            for fault, count in sorted(s['fault_counts'].items(), key=lambda x: -x[1]):
+                print(f"  {count}x  {fault}")
+                
         ok2, last_frame = src.read_frame()
         if not ok2:
             last_frame = frame
+        if last_frame.shape[1] != DISPLAY_W:
+            disp_h = int(round(last_frame.shape[0] * DISPLAY_W / last_frame.shape[1]))
+            last_frame = cv2.resize(last_frame, (DISPLAY_W, disp_h))
         draw_session_summary(last_frame, summary)
-        cv2.imshow("demo_cv (press q to quit)", last_frame)
-        cv2.waitKey(3000)
+        cv2.imshow(WINDOW_TITLE, last_frame)
+        cv2.waitKey(5000)
 
         os.makedirs(os.path.dirname(args.session_out) or ".", exist_ok=True)
         session = save_session(fsm, exercise_name, path=args.session_out)
         flush_queue()
         post_session(session, patient_id=args.patient_id)
 
+        # record which angle method produced the numbers in this session
+        total = sum(pipe.source_counts.values()) or 1
+        session["angle_method"] = {
+            "variant": args.variant,
+            "iml_model": os.path.basename(args.iml_model) if args.variant == "ML" else None,
+            "feature_stream": (pipe.iml.meta.get("feature_stream", {"session": "window", "scale": "shoulder"})
+                               if pipe.iml is not None else None),
+            "share_of_frames": {k: round(v / total, 3) for k, v in pipe.source_counts.items()},
+        }
+        if view_frames:      # shoulder: how much of the session was really a front view
+            seen = sum(view_frames.values()) or 1
+            session["front_view_share"] = round(view_frames.get("ok", 0) / seen, 3)
+        with open(args.session_out, "w") as f:
+            json.dump(session, f, indent=2)
     else:
         print("\nNo reps recorded.")
 

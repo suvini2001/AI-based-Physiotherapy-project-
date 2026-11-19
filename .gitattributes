@@ -1,0 +1,3 @@
+data/iml_*.txt -text
+data/iml_*.txt.json -text
+*.npz binary
