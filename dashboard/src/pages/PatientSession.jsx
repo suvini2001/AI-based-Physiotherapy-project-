@@ -1,35 +1,92 @@
+
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 
 export default function PatientSession() {
+  const navigate = useNavigate()
+
+  // ============================================
+  // STATE
+  // ============================================
+
   const [patient, setPatient] = useState(null)
   const [lastSession, setLastSession] = useState(null)
   const [screen, setScreen] = useState('ready')
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState('')
+
   const pollRef = useRef(null)
-  const navigate = useNavigate()
+
+  // ============================================
+  // LOAD PATIENT
+  // ============================================
 
   useEffect(() => {
     const stored = localStorage.getItem('patient')
-    if (!stored) { navigate('/patient'); return }
-    const p = JSON.parse(stored)
-    setPatient(p)
-    api.sessionStatus(p.id)
-      .then(r => { if (r.data.running) setScreen('active') })
+    const token = sessionStorage.getItem('patient_token')
+
+    if (!stored || !token) {
+      localStorage.removeItem('patient')
+      sessionStorage.removeItem('patient_token')
+      navigate('/patient', { replace: true })
+      return
+    }
+
+    let currentPatient
+
+    try {
+      currentPatient = JSON.parse(stored)
+
+      if (!currentPatient?.id || !currentPatient?.patient_id) {
+        throw new Error('Invalid patient information')
+      }
+    } catch {
+      localStorage.removeItem('patient')
+      sessionStorage.removeItem('patient_token')
+      navigate('/patient', { replace: true })
+      return
+    }
+
+    setPatient(currentPatient)
+
+    // Existing desktop session status
+    api.sessionStatus(currentPatient.id)
+      .then(response => {
+        if (response.data.running) {
+          setScreen('active')
+        }
+      })
       .catch(() => {})
-    fetch(`http://localhost:8000/patient/${JSON.parse(stored).id}/last-session`)
-      .then(r => r.json()).then(setLastSession).catch(() => {})
+
+    // Existing last-session API
+    fetch(
+      `http://localhost:8000/patient/${currentPatient.id}/last-session`
+    )
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Could not load last session')
+        }
+        return response.json()
+      })
+      .then(setLastSession)
+      .catch(() => {})
+
     return () => clearInterval(pollRef.current)
-  }, [])
+  }, [navigate])
+
+  // ============================================
+  // SESSION POLLING
+  // ============================================
 
   function startPolling(patientId) {
     clearInterval(pollRef.current)
+
     pollRef.current = setInterval(async () => {
       try {
-        const r = await api.sessionStatus(patientId)
-        if (!r.data.running) {
+        const response = await api.sessionStatus(patientId)
+
+        if (!response.data.running) {
           clearInterval(pollRef.current)
           setScreen('done')
         }
@@ -39,15 +96,29 @@ export default function PatientSession() {
     }, 2000)
   }
 
+  // ============================================
+  // DESKTOP AI SESSION
+  // ============================================
+
   async function handleStart() {
+    if (!patient) return
+
     setLaunching(true)
     setError('')
+
     try {
-      await api.launchSession(patient.id, patient.exercise)
+      await api.launchSession(
+        patient.id,
+        patient.exercise
+      )
+
       setScreen('active')
       startPolling(patient.id)
     } catch (err) {
-      setError(err.response?.data?.detail || 'Could not launch session. Make sure the backend can find demo_cv.py.')
+      setError(
+        err.response?.data?.detail ||
+        'Could not launch the desktop AI session.'
+      )
     } finally {
       setLaunching(false)
     }
@@ -55,258 +126,448 @@ export default function PatientSession() {
 
   async function handleStop() {
     clearInterval(pollRef.current)
-    await api.stopSession(patient.id).catch(() => {})
+
+    if (patient) {
+      await api.stopSession(patient.id).catch(() => {})
+    }
+
     setScreen('done')
   }
 
+  // ============================================
+  // SECURE LOGIN SESSION CLEANUP
+  // ============================================
+
   function handleLogout() {
     clearInterval(pollRef.current)
-    api.stopSession(patient?.id).catch(() => {})
+
+    // Stop an active desktop session if necessary.
+    if (screen === 'active' && patient) {
+      api.stopSession(patient.id).catch(() => {})
+    }
+
+    // Remove saved patient information.
     localStorage.removeItem('patient')
-    navigate('/patient')
+
+    // Remove the secure-login access token.
+    sessionStorage.removeItem('patient_token')
+
+    // Return to login.
+    navigate('/patient', { replace: true })
   }
 
-  if (!patient) return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-      <p className="text-slate-500 text-sm">Loading…</p>
-    </div>
-  )
+  // ============================================
+  // BROWSER EXERCISE DEMO
+  // ============================================
 
-  const exerciseLabel = patient.exercise === 'shoulder_abduction'
-    ? 'Shoulder abduction' : 'Elbow flexion'
+  function handleOpenBrowserDemo() {
+    navigate('/patient/exercise-demo')
+  }
 
-  const steps = patient.exercise === 'shoulder_abduction' ? [
-    'Stand straight with your arm at your side.',
-    'Slowly raise your arm out to the side until it reaches shoulder height.',
-    'Hold for a moment, then slowly lower it back down.',
-    'That is one rep. Repeat smoothly.',
-  ] : [
-    'Sit or stand with your arm relaxed at your side.',
-    'Slowly bend your elbow, bringing your hand up toward your shoulder.',
-    'Lower your arm back down slowly and fully.',
-    'That is one rep. Repeat smoothly.',
-  ]
+  // ============================================
+  // LOADING SCREEN
+  // ============================================
 
-  const TopBar = () => (
-    <div className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+  if (!patient) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950">
+        <p className="text-sm text-slate-400">
+          Loading patient information...
+        </p>
+      </div>
+    )
+  }
+
+  // ============================================
+  // EXERCISE INFORMATION
+  // ============================================
+
+  const exerciseLabel =
+    patient.exercise === 'shoulder_abduction'
+      ? 'Shoulder Abduction'
+      : 'Elbow Flexion'
+
+  const steps =
+    patient.exercise === 'shoulder_abduction'
+      ? [
+          'Stand straight with your arm at your side.',
+          'Slowly raise your arm out to shoulder height.',
+          'Hold for a moment, then lower it slowly.',
+          'Repeat smoothly for the prescribed repetitions.',
+        ]
+      : [
+          'Sit or stand with your arm relaxed at your side.',
+          'Slowly bend your elbow toward your shoulder.',
+          'Lower your arm slowly and fully.',
+          'Repeat smoothly for the prescribed repetitions.',
+        ]
+
+  // ============================================
+  // TOP NAVIGATION
+  // ============================================
+
+  const topBar = (
+    <header className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
-            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-          </svg>
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 font-bold text-white">
+          +
         </div>
-        <span className="font-semibold text-sm text-white">PhysioTrack</span>
+
+        <span className="font-semibold text-white">
+          PhysioTrack
+        </span>
       </div>
+
       <div className="flex items-center gap-4">
-        <div className="text-right hidden sm:block">
-          <p className="text-xs font-medium text-white">{patient.name}</p>
-          <p className="text-xs text-slate-500 font-mono">{patient.patient_id}</p>
+        <div className="hidden text-right sm:block">
+          <p className="text-sm font-medium text-white">
+            {patient.name}
+          </p>
+
+          <p className="font-mono text-xs text-slate-500">
+            {patient.patient_id}
+          </p>
         </div>
-        <button onClick={handleLogout}
-          className="text-slate-500 hover:text-slate-300 text-xs border border-slate-700 px-3 py-1.5 rounded-lg transition-colors">
-          Sign out
-        </button>
-      </div>
-    </div>
-  )
-
-  // ── Ready screen ───────────────────────────────────────────────────
-  if (screen === 'ready') return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      <TopBar />
-      <div className="max-w-2xl mx-auto px-6 py-12">
-        <div className="mb-10">
-          <h1 className="text-3xl font-bold text-white mb-2">
-            Hello, {patient.name.split(' ')[0]}
-          </h1>
-          <p className="text-slate-400">Ready for your exercise session?</p>
-        </div>
-
-        {lastSession?.date && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 mb-6 flex items-center gap-5">
-            <div className="w-10 h-10 rounded-xl bg-emerald-900 flex items-center justify-center flex-shrink-0">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round">
-                <polyline points="20,6 9,17 4,12"/>
-              </svg>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Last session</p>
-              <p className="text-white text-sm font-medium">
-                {lastSession.total_reps} reps
-                {lastSession.mean_rom ? ` · ${lastSession.mean_rom.toFixed(0)}° mean ROM` : ''}
-              </p>
-              <p className="text-slate-600 text-xs">
-                {new Date(lastSession.date).toLocaleDateString('en-GB', {
-                  weekday: 'long', day: 'numeric', month: 'long'
-                })}
-              </p>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
-          <p className="text-xs text-slate-500 mb-4">Today's prescription</p>
-          <div className="flex items-center gap-4 mb-5">
-            <div className="w-14 h-14 rounded-2xl bg-blue-900 flex items-center justify-center flex-shrink-0">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="1.5" strokeLinecap="round">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-              </svg>
-            </div>
-            <div>
-              <p className="text-white font-semibold text-lg">{exerciseLabel}</p>
-              <p className="text-slate-400 text-sm">Target: {patient.target_reps ?? '—'} reps</p>
-            </div>
-          </div>
-          <div className="bg-slate-800 rounded-xl p-4 space-y-2">
-            <p className="text-slate-400 text-xs font-medium mb-3">How to do this exercise</p>
-            {steps.map((s, i) => (
-              <div key={i} className="flex gap-3 text-sm text-slate-300">
-                <span className="text-blue-400 font-mono flex-shrink-0">{i + 1}.</span>
-                <span>{s}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-amber-950 border border-amber-800 rounded-2xl p-5 mb-8">
-          <div className="flex gap-3">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" className="flex-shrink-0 mt-0.5">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="12"/>
-              <line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-            <div>
-              <p className="text-amber-300 text-sm font-medium mb-1">What will happen</p>
-              <p className="text-amber-400 text-xs leading-relaxed">
-                Clicking the button below will automatically open the camera window on this computer.
-                Make sure your webcam can see your full arm clearly.
-                Press <span className="font-mono bg-amber-900 px-1 rounded">Q</span> in the camera window when you finish your reps.
-                Stop immediately if you feel pain.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {error && (
-          <div className="bg-red-950 border border-red-800 rounded-xl p-4 mb-6 text-red-300 text-sm">
-            {error}
-          </div>
-        )}
 
         <button
-          onClick={handleStart}
-          disabled={launching}
-          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-2xl py-4 text-base transition-colors"
+          type="button"
+          onClick={handleLogout}
+          className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
         >
-          {launching ? 'Opening camera…' : "I'm ready — start session"}
+          Sign Out
         </button>
       </div>
-    </div>
+
+    </header>
   )
 
-  // ── Active session screen ──────────────────────────────────────────
-  if (screen === 'active') return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col">
-      <TopBar />
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 max-w-lg mx-auto w-full">
-        <div className="relative mb-8">
-          <div className="w-24 h-24 rounded-3xl bg-blue-900 flex items-center justify-center">
-            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="1.5" strokeLinecap="round">
-              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-            </svg>
+  // ============================================
+  // READY SCREEN
+  // ============================================
+
+  if (screen === 'ready') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white">
+        {topBar}
+
+        <main className="mx-auto max-w-2xl px-6 py-12">
+
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold">
+              Hello, {patient.name.split(' ')[0]}
+            </h1>
+
+            <p className="mt-2 text-slate-400">
+              Ready for your exercise session?
+            </p>
           </div>
-          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
-            <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping absolute"/>
-            <span className="w-2 h-2 rounded-full bg-white"/>
-          </span>
+
+          {/* LAST SESSION */}
+
+          {lastSession?.date && (
+            <div className="mb-6 rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+              <p className="mb-2 text-xs text-slate-500">
+                Last Session
+              </p>
+
+              <p className="font-medium text-white">
+                {lastSession.total_reps} repetitions
+              </p>
+
+              {lastSession.mean_rom != null && (
+                <p className="mt-1 text-sm text-slate-400">
+                  Mean ROM: {Number(lastSession.mean_rom).toFixed(0)}°
+                </p>
+              )}
+
+              <p className="mt-2 text-xs text-slate-500">
+                {new Date(lastSession.date).toLocaleDateString(
+                  'en-GB',
+                  {
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric',
+                  }
+                )}
+              </p>
+            </div>
+          )}
+
+          {/* PRESCRIPTION */}
+
+          <section className="mb-6 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+            <p className="mb-4 text-xs text-slate-400">
+              Today's Prescription
+            </p>
+
+            <div className="mb-5 flex items-center gap-4">
+
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-900 text-2xl text-blue-300">
+                +
+              </div>
+
+              <div>
+                <h2 className="text-lg font-semibold">
+                  {exerciseLabel}
+                </h2>
+
+                <p className="text-sm text-slate-400">
+                  Target: {patient.target_reps ?? '—'} repetitions
+                </p>
+              </div>
+
+            </div>
+
+            {/* INSTRUCTIONS */}
+
+            <div className="space-y-3 rounded-xl bg-slate-800 p-4">
+
+              <h3 className="mb-3 text-sm font-medium text-slate-300">
+                Exercise Instructions
+              </h3>
+
+              {steps.map((step, index) => (
+                <div
+                  key={index}
+                  className="flex gap-3 text-sm text-slate-300"
+                >
+                  <span className="font-mono text-blue-400">
+                    {index + 1}.
+                  </span>
+
+                  <p>{step}</p>
+                </div>
+              ))}
+
+            </div>
+          </section>
+
+          {/* DEVELOPMENT NOTICE */}
+
+          <div className="mb-6 rounded-2xl border border-amber-800 bg-amber-950 p-5">
+
+            <h3 className="mb-2 font-medium text-amber-300">
+              Development Mode
+            </h3>
+
+            <p className="text-sm leading-relaxed text-amber-200">
+              The browser exercise demo uses your device's
+              camera and simulated AI measurements.
+              It does not analyze your movements or save
+              clinical results.
+            </p>
+
+            <p className="mt-3 text-xs text-amber-400">
+              Stop exercising if you experience pain.
+            </p>
+
+          </div>
+
+          {/* ERRORS */}
+
+          {error && (
+            <div
+              role="alert"
+              className="mb-5 rounded-xl border border-red-800 bg-red-950 p-4 text-sm text-red-300"
+            >
+              {error}
+            </div>
+          )}
+
+          {/* BROWSER EXERCISE BUTTON */}
+
+          <button
+            type="button"
+            onClick={handleOpenBrowserDemo}
+            className="w-full rounded-2xl bg-emerald-600 px-5 py-4 font-semibold text-white transition-colors hover:bg-emerald-500"
+          >
+            Open Browser Exercise Demo
+          </button>
+
+          <p className="mt-2 text-center text-xs text-slate-500">
+            Browser camera + simulated AI results
+          </p>
+
+          {/* EXISTING DESKTOP AI BUTTON */}
+
+          <div className="mt-8 border-t border-slate-800 pt-6">
+
+            <p className="mb-3 text-sm text-slate-400">
+              Legacy desktop AI session
+            </p>
+
+            <button
+              type="button"
+              onClick={handleStart}
+              disabled={launching}
+              className="w-full rounded-2xl border border-slate-700 bg-slate-800 px-5 py-4 font-medium text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+            >
+              {launching
+                ? 'Launching Desktop AI...'
+                : 'Start Desktop AI Session'}
+            </button>
+
+            <p className="mt-2 text-xs text-slate-500">
+              This existing function launches the Python
+              AI application on the backend computer.
+              It is separate from the browser demo and
+              may not work with the current macOS setup.
+            </p>
+
+          </div>
+
+        </main>
+      </div>
+    )
+  }
+
+  // ============================================
+  // ACTIVE DESKTOP SESSION
+  // ============================================
+
+  if (screen === 'active') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white">
+        {topBar}
+
+        <main className="mx-auto max-w-xl px-6 py-16 text-center">
+
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-blue-900 text-4xl text-blue-300">
+            +
+          </div>
+
+          <h1 className="text-3xl font-bold">
+            Session in Progress
+          </h1>
+
+          <p className="mt-3 text-slate-400">
+            The existing Python AI session is running
+            on the backend computer.
+          </p>
+
+          <div className="mt-8 space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-left">
+
+            <div className="flex justify-between">
+              <span className="text-slate-400">
+                Exercise
+              </span>
+
+              <span>{exerciseLabel}</span>
+            </div>
+
+            <div className="flex justify-between border-t border-slate-800 pt-4">
+              <span className="text-slate-400">
+                Target Repetitions
+              </span>
+
+              <span className="font-bold">
+                {patient.target_reps ?? '—'}
+              </span>
+            </div>
+
+            <div className="flex justify-between border-t border-slate-800 pt-4">
+              <span className="text-slate-400">
+                Status
+              </span>
+
+              <span className="text-emerald-400">
+                Running
+              </span>
+            </div>
+
+          </div>
+
+          <button
+            type="button"
+            onClick={handleStop}
+            className="mt-8 w-full rounded-xl bg-emerald-600 py-4 font-semibold text-white hover:bg-emerald-500"
+          >
+            I've Finished My Reps
+          </button>
+
+          <button
+            type="button"
+            onClick={handleStop}
+            className="mt-3 w-full rounded-xl border border-slate-700 py-3 text-slate-300 hover:bg-slate-800"
+          >
+            Cancel Session
+          </button>
+
+        </main>
+      </div>
+    )
+  }
+
+  // ============================================
+  // FINISHED DESKTOP SESSION
+  // ============================================
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white">
+      {topBar}
+
+      <main className="mx-auto max-w-md px-6 py-16 text-center">
+
+        <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-emerald-900 text-4xl text-emerald-300">
+          ✓
         </div>
 
-        <h2 className="text-2xl font-bold text-white mb-2 text-center">Session in progress</h2>
-        <p className="text-slate-400 text-sm text-center mb-2">
-          The camera window is open on your screen.
-        </p>
-        <p className="text-slate-500 text-xs text-center mb-10">
-          Do your {patient.target_reps} reps, then press{' '}
-          <span className="font-mono bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Q</span>{' '}
-          in the camera window to finish.
+        <h1 className="text-3xl font-bold">
+          Session Finished
+        </h1>
+
+        <p className="mt-3 text-slate-400">
+          Your desktop session has ended.
         </p>
 
-        <div className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
-          <div className="flex justify-between items-center mb-3">
-            <span className="text-slate-400 text-sm">Exercise</span>
-            <span className="text-white text-sm font-medium">{exerciseLabel}</span>
-          </div>
-          <div className="border-t border-slate-800 pt-3 flex justify-between items-center mb-3">
-            <span className="text-slate-400 text-sm">Target reps</span>
-            <span className="text-white font-bold text-lg">{patient.target_reps ?? '—'}</span>
-          </div>
-          <div className="border-t border-slate-800 pt-3 flex justify-between items-center">
-            <span className="text-slate-400 text-sm">Status</span>
-            <span className="flex items-center gap-2 text-emerald-400 text-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/>
-              Tracking
+        <p className="mt-2 text-sm text-slate-500">
+          Session saving has not been verified.
+          Check your history before assuming results
+          were stored.
+        </p>
+
+        <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-left">
+
+          <div className="flex justify-between">
+            <span className="text-slate-400">
+              Patient ID
+            </span>
+
+            <span className="font-mono">
+              {patient.patient_id}
             </span>
           </div>
+
+          <div className="mt-4 flex justify-between border-t border-slate-800 pt-4">
+            <span className="text-slate-400">
+              Exercise
+            </span>
+
+            <span>{exerciseLabel}</span>
+          </div>
+
         </div>
 
-        <p className="text-slate-600 text-xs text-center mb-6">
-          This page will update automatically when you finish. Or press the button below.
-        </p>
+        <button
+          type="button"
+          onClick={() => setScreen('ready')}
+          className="mt-8 w-full rounded-xl bg-blue-600 py-3 font-semibold hover:bg-blue-500"
+        >
+          Return to Dashboard
+        </button>
 
         <button
-          onClick={handleStop}
-          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-2xl py-4 text-base transition-colors mb-3"
+          type="button"
+          onClick={handleLogout}
+          className="mt-3 w-full rounded-xl border border-slate-700 py-3 text-slate-300 hover:bg-slate-800"
         >
-          I've finished my reps
+          Sign Out
         </button>
-        <button
-          onClick={() => { handleStop(); }}
-          className="w-full border border-slate-700 hover:border-slate-600 text-slate-400 hover:text-slate-300 font-medium rounded-2xl py-3 text-sm transition-colors"
-        >
-          Cancel session
-        </button>
-      </div>
-    </div>
-  )
 
-  // ── Done screen ────────────────────────────────────────────────────
-  return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col">
-      <TopBar />
-      <div className="flex-1 flex flex-col items-center justify-center px-6">
-        <div className="max-w-sm w-full text-center">
-          <div className="w-20 h-20 rounded-3xl bg-emerald-900 flex items-center justify-center mx-auto mb-8">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round">
-              <polyline points="20,6 9,17 4,12"/>
-            </svg>
-          </div>
-          <h2 className="text-3xl font-bold text-white mb-3">Session complete!</h2>
-          <p className="text-slate-400 mb-2">Great work. Your physiotherapist will review your data.</p>
-          <p className="text-slate-600 text-sm mb-10">Your session was saved automatically.</p>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-8 text-left">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-slate-400 text-sm">Patient ID</span>
-              <span className="text-white font-mono font-semibold">{patient.patient_id}</span>
-            </div>
-            <div className="border-t border-slate-800 pt-3 flex items-center justify-between">
-              <span className="text-slate-400 text-sm">Exercise</span>
-              <span className="text-white text-sm">{exerciseLabel}</span>
-            </div>
-          </div>
-
-          <div className="flex gap-3">
-            <button onClick={() => setScreen('ready')}
-              className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-medium rounded-xl py-3 text-sm transition-colors">
-              Do another session
-            </button>
-            <button onClick={handleLogout}
-              className="flex-1 border border-slate-700 hover:border-slate-600 text-slate-300 font-medium rounded-xl py-3 text-sm transition-colors">
-              Sign out
-            </button>
-          </div>
-        </div>
-      </div>
+      </main>
     </div>
   )
 }

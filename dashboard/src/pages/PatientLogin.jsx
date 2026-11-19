@@ -1,191 +1,339 @@
+
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 
-const BASE = 'http://localhost:8000'
+const BASE = 'http://127.0.0.1:8000'
 
 export default function PatientLogin() {
+  const navigate = useNavigate()
+
   const [mode, setMode] = useState('login')
   const [name, setName] = useState('')
   const [patientId, setPatientId] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [newId, setNewId] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [newId, setNewId] = useState(null)
-  const navigate = useNavigate()
 
-  async function handleRegister(e) {
-    e.preventDefault()
-    if (!name.trim()) { setError('Enter your full name'); return }
-    setLoading(true)
-    setError('')
-    try {
-      const res = await axios.post(`${BASE}/patient/register`, { name: name.trim() })
-      setNewId(res.data.patient_id)
-      localStorage.setItem('patient', JSON.stringify(res.data))
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Registration failed')
-    } finally {
-      setLoading(false) }
+  function saveSession(data) {
+    // Development-only storage.
+    // We will replace this with secure server-managed
+    // sessions before real patient deployment.
+    localStorage.setItem(
+      'patient',
+      JSON.stringify(data.patient)
+    )
+
+    sessionStorage.setItem(
+      'patient_token',
+      data.access_token
+    )
   }
 
   async function handleLogin(e) {
     e.preventDefault()
-    if (!patientId.trim() || !name.trim()) { setError('Enter your Patient ID and name'); return }
-    setLoading(true)
     setError('')
+    setLoading(true)
+
     try {
-      const res = await axios.post(`${BASE}/patient/login`, {
-        patient_id: patientId.trim(),
-        name: name.trim(),
-      })
-      localStorage.setItem('patient', JSON.stringify(res.data))
+      const response = await axios.post(
+        `${BASE}/patient/login-secure`,
+        {
+          patient_id: patientId.trim().toUpperCase(),
+          password,
+        }
+      )
+
+      saveSession(response.data)
       navigate('/patient/session')
     } catch (err) {
-      setError(err.response?.data?.detail || 'Login failed')
+      setError(
+        err.response?.data?.detail ||
+        'Login failed. Please try again.'
+      )
     } finally {
-      setLoading(false) }
+      setLoading(false)
+    }
   }
+
+  async function handleRegister(e) {
+    e.preventDefault()
+    setError('')
+
+    if (!name.trim()) {
+      setError('Please enter your full name.')
+      return
+    }
+
+    if (password.length < 12) {
+      setError('Password must contain at least 12 characters.')
+      return
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.')
+      return
+    }
+
+    setLoading(true)
+
+    try {
+      const response = await axios.post(
+        `${BASE}/patient/register-secure`,
+        {
+          name: name.trim(),
+          password,
+        }
+      )
+
+      saveSession(response.data)
+      setNewId(response.data.patient.patient_id)
+      setPassword('')
+      setConfirmPassword('')
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ||
+        'Registration failed.'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function switchMode(nextMode) {
+    setMode(nextMode)
+    setError('')
+    setPassword('')
+    setConfirmPassword('')
+  }
+
+  // ==============================================
+  // REGISTRATION SUCCESS
+  // ==============================================
 
   if (newId) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
-        <div className="w-full max-w-sm text-center">
-          <div className="w-16 h-16 rounded-2xl bg-emerald-900 flex items-center justify-center mx-auto mb-6">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round">
-              <polyline points="20,6 9,17 4,12"/>
-            </svg>
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white">
+        <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
+
+          <div className="mb-5 text-5xl text-emerald-400">
+            ✓
           </div>
-          <h2 className="text-2xl font-bold text-white mb-2">You're registered!</h2>
-          <p className="text-slate-400 text-sm mb-6">Write down your Patient ID — you'll need it every time you log in.</p>
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 mb-6">
-            <p className="text-slate-500 text-xs mb-2">Your Patient ID</p>
-            <p className="text-5xl font-bold text-emerald-400 tracking-widest font-mono">{newId}</p>
-            <p className="text-slate-500 text-xs mt-3">Keep this safe — it cannot be recovered</p>
+
+          <h1 className="text-2xl font-bold">
+            Registration Successful!
+          </h1>
+
+          <p className="mt-3 text-sm text-slate-400">
+            Your PhysioTrack patient account is ready.
+            Save your Patient ID securely.
+          </p>
+
+          <div className="mt-6 rounded-xl bg-slate-800 p-5">
+            <p className="text-xs text-slate-400">
+              Your Patient ID
+            </p>
+
+            <p className="mt-2 break-all font-mono text-3xl font-bold text-emerald-400">
+              {newId}
+            </p>
           </div>
+
           <button
             onClick={() => navigate('/patient/session')}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl py-3 text-sm transition-colors"
+            className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-3 font-semibold hover:bg-blue-500"
           >
-            Start my first session
+            Continue to Patient Dashboard
           </button>
         </div>
       </div>
     )
   }
 
+  // ==============================================
+  // LOGIN / REGISTRATION
+  // ==============================================
+
   return (
-    <div className="min-h-screen bg-slate-950 flex">
-      {/* Left branding */}
-      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-14"
-        style={{ background: 'linear-gradient(135deg, #0f172a 0%, #0c2340 100%)' }}>
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-blue-500 flex items-center justify-center">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
-              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-            </svg>
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white">
+
+      <div className="w-full max-w-md">
+
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-2xl">
+            +
           </div>
-          <span className="text-white font-semibold text-lg">PhysioTrack</span>
-        </div>
-        <div>
-          <h1 className="text-5xl font-bold text-white leading-tight mb-6">
-            Your home<br />
-            <span className="text-blue-400">physio sessions</span>
+
+          <h1 className="text-3xl font-bold">
+            PhysioTrack
           </h1>
-          <p className="text-slate-400 text-lg leading-relaxed max-w-md">
-            Do your prescribed exercises at home. Your physiotherapist monitors your progress remotely — no clinic visit needed.
+
+          <p className="mt-2 text-sm text-slate-400">
+            Your physiotherapy exercise portal
           </p>
-          <div className="mt-10 space-y-4">
-            {[
-              { icon: '①', text: 'Log in with your Patient ID and name' },
-              { icon: '②', text: 'Follow the on-screen exercise guide' },
-              { icon: '③', text: 'Your physio reviews your session automatically' },
-            ].map(s => (
-              <div key={s.icon} className="flex items-center gap-4">
-                <span className="text-blue-400 text-xl font-bold">{s.icon}</span>
-                <span className="text-slate-300 text-sm">{s.text}</span>
+        </div>
+
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-7">
+
+          <div className="mb-6 grid grid-cols-2 gap-2 rounded-xl bg-slate-800 p-1">
+
+            <button
+              type="button"
+              onClick={() => switchMode('login')}
+              className={`rounded-lg py-3 text-sm font-medium ${
+                mode === 'login'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400'
+              }`}
+            >
+              Login
+            </button>
+
+            <button
+              type="button"
+              onClick={() => switchMode('register')}
+              className={`rounded-lg py-3 text-sm font-medium ${
+                mode === 'register'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400'
+              }`}
+            >
+              Register
+            </button>
+
+          </div>
+
+          <h2 className="mb-5 text-xl font-semibold">
+            {mode === 'login'
+              ? 'Patient Login'
+              : 'Create Patient Account'}
+          </h2>
+
+          <form
+            onSubmit={
+              mode === 'login'
+                ? handleLogin
+                : handleRegister
+            }
+            className="space-y-5"
+          >
+
+            {mode === 'register' && (
+              <div>
+                <label className="mb-2 block text-sm text-slate-300">
+                  Full Name
+                </label>
+
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  required
+                  maxLength={150}
+                  autoComplete="name"
+                  placeholder="Enter your full name"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-white outline-none focus:border-blue-500"
+                />
               </div>
-            ))}
-          </div>
-        </div>
-        <p className="text-slate-600 text-sm">University of Peradeniya · E/21/140 · 2026</p>
-      </div>
+            )}
 
-      {/* Right form */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-slate-950">
-        <div className="w-full max-w-md">
-          <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <div className="w-9 h-9 rounded-lg bg-blue-500 flex items-center justify-center">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-              </svg>
+            {mode === 'login' && (
+              <div>
+                <label className="mb-2 block text-sm text-slate-300">
+                  Patient ID
+                </label>
+
+                <input
+                  type="text"
+                  value={patientId}
+                  onChange={e => setPatientId(e.target.value)}
+                  required
+                  autoComplete="username"
+                  placeholder="Example: PT439699"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-white outline-none focus:border-blue-500"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="mb-2 block text-sm text-slate-300">
+                Password
+              </label>
+
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                minLength={mode === 'register' ? 12 : undefined}
+                maxLength={128}
+                autoComplete={
+                  mode === 'login'
+                    ? 'current-password'
+                    : 'new-password'
+                }
+                placeholder="Enter password"
+                className="w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-white outline-none focus:border-blue-500"
+              />
             </div>
-            <span className="text-white font-semibold text-lg">PhysioTrack</span>
-          </div>
 
-          {/* Tab switcher */}
-          <div className="flex gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1 mb-8">
-            <button onClick={() => { setMode('login'); setError('') }}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${mode === 'login' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-              Returning patient
+            {mode === 'register' && (
+              <div>
+                <label className="mb-2 block text-sm text-slate-300">
+                  Confirm Password
+                </label>
+
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  required
+                  minLength={12}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  placeholder="Confirm your password"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-white outline-none focus:border-blue-500"
+                />
+              </div>
+            )}
+
+            {mode === 'register' && (
+              <p className="text-xs text-slate-400">
+                Use a unique password with at least
+                12 characters.
+              </p>
+            )}
+
+            {error && (
+              <div
+                role="alert"
+                className="rounded-xl border border-red-800 bg-red-950 p-3 text-sm text-red-300"
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              {loading
+                ? 'Please wait...'
+                : mode === 'login'
+                  ? 'Login Securely'
+                  : 'Create Account'}
             </button>
-            <button onClick={() => { setMode('register'); setError('') }}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${mode === 'register' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-              First time
-            </button>
-          </div>
 
-          {mode === 'login' ? (
-            <>
-              <h2 className="text-2xl font-semibold text-white mb-1">Welcome back</h2>
-              <p className="text-slate-400 text-sm mb-8">Enter your Patient ID and name to continue</p>
-              <form onSubmit={handleLogin} className="space-y-5">
-                <div>
-                  <label className="block text-sm text-slate-400 mb-2">Patient ID</label>
-                  <input value={patientId}
-                    onChange={e => { setPatientId(e.target.value.toUpperCase()); setError('') }}
-                    placeholder="PT0001"
-                    className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-4 py-3 text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono tracking-wider transition-colors" />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-2">Full name</label>
-                  <input value={name}
-                    onChange={e => { setName(e.target.value); setError('') }}
-                    placeholder="Your full name"
-                    className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-4 py-3 text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors" />
-                </div>
-                {error && <div className="bg-red-950 border border-red-800 rounded-lg px-4 py-3 text-red-300 text-sm">{error}</div>}
-                <button type="submit" disabled={loading}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg px-4 py-3 text-sm transition-colors">
-                  {loading ? 'Signing in…' : 'Start session'}
-                </button>
-              </form>
-            </>
-          ) : (
-            <>
-              <h2 className="text-2xl font-semibold text-white mb-1">Create your account</h2>
-              <p className="text-slate-400 text-sm mb-8">You'll get a Patient ID to use every time you log in</p>
-              <form onSubmit={handleRegister} className="space-y-5">
-                <div>
-                  <label className="block text-sm text-slate-400 mb-2">Full name</label>
-                  <input value={name}
-                    onChange={e => { setName(e.target.value); setError('') }}
-                    placeholder="Your full name"
-                    className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-4 py-3 text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors" />
-                </div>
-                {error && <div className="bg-red-950 border border-red-800 rounded-lg px-4 py-3 text-red-300 text-sm">{error}</div>}
-                <button type="submit" disabled={loading}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg px-4 py-3 text-sm transition-colors">
-                  {loading ? 'Creating…' : 'Create account'}
-                </button>
-              </form>
-            </>
-          )}
+          </form>
 
-          <div className="mt-8 text-center">
-            <p className="text-slate-600 text-xs">Are you a physiotherapist?</p>
-            <a href="/" className="text-blue-400 hover:text-blue-300 text-xs transition-colors">Go to physio portal →</a>
-          </div>
         </div>
+
+        <p className="mt-5 text-center text-xs text-slate-500">
+          Development environment — fictional patient data only.
+        </p>
       </div>
     </div>
   )

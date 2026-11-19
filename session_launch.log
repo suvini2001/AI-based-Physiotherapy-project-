@@ -1,0 +1,27 @@
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+W0000 00:00:1794314985.313529   15900 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1794314985.398030    5204 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+D:\3YP\AI-based-Physiotherapy-project-\.venv\Lib\site-packages\google\protobuf\symbol_database.py:55: UserWarning: SymbolDatabase.GetPrototype() is deprecated. Please use message_factory.GetMessageClass() instead. SymbolDatabase.GetPrototype() will be removed soon.
+  warnings.warn('SymbolDatabase.GetPrototype() is deprecated. Please '
+Audio feedback: ready
+WARNING: no --calibration given: angles are uncorrected (variant A median MAE 16 deg on REHAB24-6).
+Template loaded: elbow_flexion  recorded_by=synthetic_cosine_for_testing  mu=199.6  sigma=25.0
+WARNING: template is not calibrated from real reps. DTW part of the score is fixed at a neutral 50. Run scripts/build_template.py.
+Thresholds updated from calibration
+Traceback (most recent call last):
+  File "D:\3YP\AI-based-Physiotherapy-project-\demo_cv.py", line 335, in <module>
+    main()
+  File "D:\3YP\AI-based-Physiotherapy-project-\demo_cv.py", line 254, in main
+    state, _ = fsm.update(ang, timestamp, landmarks=clean)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\3YP\AI-based-Physiotherapy-project-\exercise_state.py", line 129, in update
+    self._finish_rep(timestamp_s)
+  File "D:\3YP\AI-based-Physiotherapy-project-\exercise_state.py", line 181, in _finish_rep
+    self.rep_callback(rep)
+  File "D:\3YP\AI-based-Physiotherapy-project-\demo_cv.py", line 145, in on_rep_complete
+    print(f"  Rep {rep['rep_number']:2d} | "
+  File "C:\Users\ASUS\AppData\Local\Programs\Python\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 31: character maps to <undefined>

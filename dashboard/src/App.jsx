@@ -8,6 +8,9 @@ import PatientDetail from './pages/PatientDetail'
 import LiveView from './pages/LiveView'
 import PatientLogin from './pages/PatientLogin'
 import PatientSession from './pages/PatientSession'
+import CameraTest from './components/CameraTest'
+import ExerciseSession from './pages/ExerciseSession'
+
 
 function PrivateRoute({ children }) {
   const { token } = useAuth()
@@ -24,6 +27,15 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/*Exercise session*/}
+          <Route path="/exercise-demo"element={<ExerciseSession />}/>
+          <Route path="/patient/exercise-demo"element={
+            <PatientRoute>
+              <ExerciseSession />
+            </PatientRoute>
+           }
+          />
+          <Route path="/camera-test" element={<CameraTest />} />
           {/* Physio portal */}
           <Route path="/login" element={<Login />} />
           <Route path="/" element={
