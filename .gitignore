@@ -23,3 +23,8 @@ mlflow.db
 mlruns/
 mlartifacts/
 .venv-mlflow/
+.env
+# patch files (apply, then delete)
+*.patch
+*.orig
+*.rej

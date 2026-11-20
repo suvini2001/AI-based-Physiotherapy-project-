@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${N8N_DB_PASSWORD}
+      POSTGRES_DB: n8n
+    volumes: [ "n8n_pg:/var/lib/postgresql/data" ]
+  n8n:
+    image: docker.n8n.io/n8nio/n8n # pin the version you start with
+    ports: [ "5678:5678" ]
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      GENERIC_TIMEZONE: Asia/Colombo
+      WEBHOOK_URL: http://localhost:5678/
+    volumes: [ "n8n_data:/home/node/.n8n" ]
+    depends_on: [ postgres ]
+volumes: { n8n_pg: {}, n8n_data: {} }
