@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16  #PostgreSQL version 16 Docker image එක භාවිත කිරීම
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${N8N_DB_PASSWORD} #Database password එක .env file එකෙන් ලබාගැනීම
+      POSTGRES_DB: n8n  #n8n නමින් database එකක් initialize කිරීම
+    volumes: [ "n8n_pg:/var/lib/postgresql/data" ]
+# මෙතැන කරන්නේ n8n Docker image එක download කරලා container එකක් run කිරීම.
+  n8n:
+    image: docker.n8n.io/n8nio/n8n   # pin the version you start with
+    ports: [ "5678:5678" ]
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      GENERIC_TIMEZONE: Asia/Colombo
+      WEBHOOK_URL: http://localhost:5678/
+    volumes: [ "n8n_data:/home/node/.n8n" ]
+    depends_on: [ postgres ]
+volumes: { n8n_pg: {}, n8n_data: {} }
+#Database data persistent storage එකක තැබීම
+#volumes වැදගත්. Container එක delete කරලා නැවත create කළත් volume එක delete නොකළ තාක් database data තබාගන්න පුළුවන්.

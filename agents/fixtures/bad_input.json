@@ -1,0 +1,13 @@
+{
+  "contract_version": "1.0",
+  "event": "session.completed",
+  "request_id": "b2222222-2222-4222-8222-222222222222",
+  "sent_at": "2026-11-19T15:30:00+05:30",
+  "patient": {"id": 1},
+  "prescription": {
+    "exercise": "elbow_flexion",
+    "target_reps": 10,
+    "target_rom": 120.0
+  },
+  "history": []
+}
