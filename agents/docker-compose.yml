@@ -9,6 +9,14 @@ services:
 # මෙතැන කරන්නේ n8n Docker image එක download කරලා container එකක් run කිරීම.
   n8n:
     image: docker.n8n.io/n8nio/n8n   # pin the version you start with
+    image: postgres:16
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${N8N_DB_PASSWORD}
+      POSTGRES_DB: n8n
+    volumes: [ "n8n_pg:/var/lib/postgresql/data" ]
+  n8n:
+    image: docker.n8n.io/n8nio/n8n # pin the version you start with
     ports: [ "5678:5678" ]
     environment:
       DB_TYPE: postgresdb

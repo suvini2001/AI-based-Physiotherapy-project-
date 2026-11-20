@@ -1,0 +1,48 @@
+{
+ "joint": "shoulder",
+ "features": [
+  "angle_2d",
+  "elev_2d",
+  "elev_world",
+  "elev_lift",
+  "plan_upper",
+  "len_upper",
+  "torso_ratio",
+  "trunk_tilt",
+  "el_out",
+  "el_up",
+  "wz_sh_el",
+  "wz_trunk",
+  "vis_sh",
+  "vis_el",
+  "vis_hip"
+ ],
+ "feature_code": "shoulder_features.ShoulderFeatureStream",
+ "params": {
+  "objective": "l1",
+  "n_estimators": 200,
+  "num_leaves": 31,
+  "learning_rate": 0.09,
+  "min_child_samples": 80,
+  "subsample": 0.8,
+  "subsample_freq": 1,
+  "colsample_bytree": 0.8,
+  "reg_lambda": 1.0,
+  "verbosity": -1
+ },
+ "choice_per_view": {
+  "front": "iml",
+  "profile": "iml"
+ },
+ "rule_choice_per_view": {
+  "front": "curve",
+  "profile": "iml"
+ },
+ "decision_note": "Pre-registered rule chose curve for front (I_ML gain 2.55 deg < 3 deg) and I_ML for profile. Deployed: I_ML for all views, for consistency with the elbow and one model for front and side; the population curve (population_curve_shoulder_front.json) is kept as the fallback.",
+ "fallback_curve": "population_curve_shoulder_front.json",
+ "trained_on": "REHAB24-6 Ex1 + Ex2 only (CC BY-NC), streaming features",
+ "cv_E3_median_mae": {
+  "front": 5.56,
+  "profile": 9.11
+ }
+}
