@@ -28,3 +28,5 @@ mlartifacts/
 *.patch
 *.orig
 *.rej
+
+*.db
