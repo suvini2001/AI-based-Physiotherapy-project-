@@ -1,0 +1,200 @@
+{
+  "name": "PhysioTrack - A1 Metrics Webhook (Development)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "physiotrack-a1-metrics",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "id": "6bacf270-4fdb-52d1-ac66-7b6b0ba33b6a",
+      "name": "Session Completed (Webhook)",
+      "webhookId": "906eb607-e7a2-5381-b20f-50fed279e923"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Development-only shape checking. Add Webhook Header Auth before external exposure.\nconst incoming = $input.first().json;\nconst ev = incoming && incoming.body ? incoming.body : incoming;\nconst errors = [];\nconst object = x => x !== null && typeof x === 'object' && !Array.isArray(x);\nconst finite = x => typeof x === 'number' && Number.isFinite(x);\nif (!object(ev)) {\n  errors.push('Event must be a JSON object.');\n} else {\n  if (ev.contract_version !== '1.0') errors.push('contract_version must be 1.0.');\n  if (ev.event !== 'session.completed') errors.push('event must be session.completed.');\n  if (typeof ev.request_id !== 'string' || !ev.request_id.trim()) errors.push('request_id is required.');\n  if (!object(ev.session)) {\n    errors.push('session object is required.');\n  } else {\n    if (!Number.isInteger(ev.session.session_id) || ev.session.session_id < 1) errors.push('session.session_id must be a positive integer.');\n    if (typeof ev.session.exercise !== 'string' || !ev.session.exercise) errors.push('session.exercise is required.');\n    if (!Number.isInteger(ev.session.total_reps) || ev.session.total_reps < 0) errors.push('session.total_reps must be a nonnegative integer.');\n    if (!finite(ev.session.mean_rom) || ev.session.mean_rom < 0) errors.push('session.mean_rom must be a nonnegative number.');\n    if (!Array.isArray(ev.session.reps)) errors.push('session.reps must be an array.');\n    if (ev.session.mean_quality != null && (!finite(ev.session.mean_quality) || ev.session.mean_quality < 0 || ev.session.mean_quality > 1)) errors.push('session.mean_quality must be between 0 and 1 or null.');\n  }\n  if (!object(ev.prescription)) {\n    errors.push('prescription object is required.');\n  } else {\n    if (!finite(ev.prescription.target_reps) || ev.prescription.target_reps <= 0) errors.push('prescription.target_reps must be positive.');\n    if (!finite(ev.prescription.target_rom) || ev.prescription.target_rom <= 0) errors.push('prescription.target_rom must be positive.');\n  }\n  if (!Array.isArray(ev.history)) {\n    errors.push('history must be an array (empty for first session).');\n  } else if (ev.history.some(h => !object(h) || !finite(h.mean_rom))) {\n    errors.push('Every history item must have a numeric mean_rom.');\n  }\n}\n// Preserve body wrapper so A1 code works unchanged behind Webhook.\nreturn [{ json: {ok: errors.length === 0, errors, body: ev} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        200
+      ],
+      "id": "18611322-618f-5d1a-a9ef-ca255f205bf2",
+      "name": "Validate Session Event"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "dbf78e93-8ca7-58a3-a5dd-a70bccb43055",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        500,
+        200
+      ],
+      "id": "0d398ef8-2abe-5a0a-bbee-1c820133dc0b",
+      "name": "Is Valid?"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * PhysioTrack A1 Metrics Engine\n * n8n Code node; Run Once for All Items.\n * Input: {body: session.completed event} from Webhook, or bare event.\n * Output: {ev, metrics}. No LLM calls.\n */\n\n// Preliminary thresholds — agree final values with a physiotherapist.\nconst CONFIG = {\n  fastRepMaxSeconds: 1.0,\n  baselineSessions: 3,\n  slopeMinSessions: 3,\n  quality: { good: 0.75, fair: 0.50 },\n};\n\n// Accept the Webhook's {body:...} wrapper or a bare fixture.\nconst input = $input.first().json;\nconst ev = input && input.body ? input.body : input;\nconst s = ev.session || {};\nconst rx = ev.prescription || {};\nconst reps = Array.isArray(s.reps) ? s.reps : [];\nconst hist = Array.isArray(ev.history) ? ev.history : []; // newest first\n\nconst round0 = (x) => x === null ? null : Math.round(x);\nconst round1 = (x) => x === null ? null : +x.toFixed(1);\nconst round2 = (x) => x === null ? null : +x.toFixed(2);\nconst isNum = (v) => typeof v === 'number' && Number.isFinite(v);\nconst pct = (num, den) => isNum(num) && isNum(den) && den > 0 ? 100 * num / den : null;\n\nconst faultCounts = {};\nfor (const r of reps) {\n  for (const f of (Array.isArray(r.faults) ? r.faults : [])) {\n    if (f && typeof f.code === 'string' && f.code) {\n      faultCounts[f.code] = (faultCounts[f.code] || 0) + 1;\n    }\n  }\n}\n\nconst fastReps = reps.filter(r => isNum(r.duration_s) && r.duration_s < CONFIG.fastRepMaxSeconds).length;\nconst fastRepShare = reps.length ? round2(fastReps / reps.length) : null;\n\n// History newest first -> reverse to oldest first, then current session.\nconst series = [...hist].reverse().map(h => h.mean_rom).concat([s.mean_rom]).filter(isNum);\nlet slope = null;\nconst n = series.length;\nif (n >= CONFIG.slopeMinSessions) {\n  const xMean = (n - 1) / 2;\n  const yMean = series.reduce((a, b) => a + b, 0) / n;\n  let num = 0;\n  let den = 0;\n  series.forEach((y, x) => {\n    num += (x - xMean) * (y - yMean);\n    den += (x - xMean) ** 2;\n  });\n  slope = den ? round2(num / den) : null;\n}\n\n// Mean of up to three latest past sessions. Null if history is empty.\nconst baseWin = hist.slice(0, CONFIG.baselineSessions).map(h => h.mean_rom).filter(isNum);\nconst baselineRom = baseWin.length ? round1(baseWin.reduce((a, b) => a + b, 0) / baseWin.length) : null;\n\nlet qualityBand = null;\nif (isNum(s.mean_quality)) {\n  qualityBand = s.mean_quality >= CONFIG.quality.good ? 'good'\n              : s.mean_quality >= CONFIG.quality.fair ? 'fair'\n              : 'poor';\n}\n\nconst metrics = {\n  reps_vs_target_pct: round0(pct(s.total_reps, rx.target_reps)),\n  rom_vs_target_pct: round0(pct(s.mean_rom, rx.target_rom)),\n  fault_counts: faultCounts,\n  fast_rep_share: fastRepShare,\n  rom_slope_deg_per_session: slope,\n  baseline_rom: baselineRom,\n  quality_band: qualityBand,\n  incomplete_attempts: isNum(s.incomplete_attempts) ? s.incomplete_attempts : 0,\n  sessions_in_history: hist.length,\n};\n\nreturn [{json: {ev, metrics}}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        90
+      ],
+      "id": "61eb542a-0bd9-52d2-af4a-0ff7d052cc6a",
+      "name": "A1 Metrics Engine"
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1010,
+        90
+      ],
+      "id": "a68a43d1-4924-5829-b637-8be1bddb64b5",
+      "name": "Respond 200 - Metrics"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Return validation failures without echoing patient session data.\nconst {errors} = $input.first().json;\nreturn [{json: {ok:false, errors}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        335
+      ],
+      "id": "b1de612d-18bd-57a6-84a1-3ca7c12e13be",
+      "name": "Format 400 Errors"
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1010,
+        335
+      ],
+      "id": "089f369f-c05d-5e51-a7a2-c7a01853d6c4",
+      "name": "Respond 400 - Bad Input"
+    }
+  ],
+  "connections": {
+    "Session Completed (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "Validate Session Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Session Event": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "A1 Metrics Engine",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format 400 Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A1 Metrics Engine": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 - Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format 400 Errors": {
+      "main": [
+        [
+          {
+            "node": "Respond 400 - Bad Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}

@@ -1,0 +1,149 @@
+{
+  "contract_version": "1.0",
+  "event": "session.completed",
+  "request_id": "7f9c2b1e-4a1d-4c55-9e2b-0c1d2e3f4a5b",
+  "sent_at": "2026-11-19T15:30:00+05:30",
+  "patient": {
+    "id": 1
+  },
+  "prescription": {
+    "exercise": "elbow_flexion",
+    "target_reps": 10,
+    "target_rom": 120.0
+  },
+  "session": {
+    "session_id": 42,
+    "date": "2026-11-19T15:20:00",
+    "exercise": "elbow_flexion",
+    "total_reps": 8,
+    "mean_rom": 104.5,
+    "mean_quality": 0.71,
+    "incomplete_attempts": 2,
+    "reps": [
+      {
+        "rep_number": 1,
+        "max_angle": 139.5,
+        "min_angle": 35,
+        "rom": 104.5,
+        "duration_s": 0.7,
+        "quality_score": 0.71,
+        "faults": [
+          {
+            "code": "TRUNK_LEAN",
+            "fault_text": "Trunk lean detected"
+          }
+        ]
+      },
+      {
+        "rep_number": 2,
+        "max_angle": 139.5,
+        "min_angle": 35,
+        "rom": 104.5,
+        "duration_s": 0.7,
+        "quality_score": 0.71,
+        "faults": [
+          {
+            "code": "TRUNK_LEAN",
+            "fault_text": "Trunk lean detected"
+          }
+        ]
+      },
+      {
+        "rep_number": 3,
+        "max_angle": 139.5,
+        "min_angle": 35,
+        "rom": 104.5,
+        "duration_s": 2.3,
+        "quality_score": 0.71,
+        "faults": [
+          {
+            "code": "TRUNK_LEAN",
+            "fault_text": "Trunk lean detected"
+          }
+        ]
+      },
+      {
+        "rep_number": 4,
+        "max_angle": 139.5,
+        "min_angle": 35,
+        "rom": 104.5,
+        "duration_s": 2.3,
+        "quality_score": 0.71,
+        "faults": [
+          {
+            "code": "TRUNK_LEAN",
+            "fault_text": "Trunk lean detected"
+          }
+        ]
+      },
+      {
+        "rep_number": 5,
+        "max_angle": 139.5,
+        "min_angle": 35,
+        "rom": 104.5,
+        "duration_s": 2.3,
+        "quality_score": 0.71,
+        "faults": []
+      },
+      {
+        "rep_number": 6,
+        "max_angle": 139.5,
+        "min_angle": 35,
+        "rom": 104.5,
+        "duration_s": 2.3,
+        "quality_score": 0.71,
+        "faults": []
+      },
+      {
+        "rep_number": 7,
+        "max_angle": 139.5,
+        "min_angle": 35,
+        "rom": 104.5,
+        "duration_s": 2.3,
+        "quality_score": 0.71,
+        "faults": []
+      },
+      {
+        "rep_number": 8,
+        "max_angle": 139.5,
+        "min_angle": 35,
+        "rom": 104.5,
+        "duration_s": 2.3,
+        "quality_score": 0.71,
+        "faults": []
+      }
+    ]
+  },
+  "history": [
+    {
+      "session_id": 41,
+      "date": "2026-11-17",
+      "total_reps": 10,
+      "mean_rom": 100,
+      "mean_quality": 0.69,
+      "fault_counts": {
+        "TRUNK_LEAN": 2
+      }
+    },
+    {
+      "session_id": 40,
+      "date": "2026-11-15",
+      "total_reps": 10,
+      "mean_rom": 96,
+      "mean_quality": 0.7,
+      "fault_counts": {
+        "TRUNK_LEAN": 3
+      }
+    },
+    {
+      "session_id": 39,
+      "date": "2026-11-13",
+      "total_reps": 10,
+      "mean_rom": 92,
+      "mean_quality": 0.66,
+      "fault_counts": {
+        "TRUNK_LEAN": 4
+      }
+    }
+  ]
+}
