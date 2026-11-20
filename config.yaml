@@ -29,3 +29,12 @@ angle:
   method: ML                                          # ML = learned I_ML angle; A = 2D angle + curve
   iml_model: data/iml_nolook_rehab24_exp_torso.txt   # expanding session stats, torso-length scale
   fallback_calibration: data/user_calibration.json   # curve used for the first ~1 s and when features are missing
+
+# Shoulder angle used by demo_cv.py --exercise shoulder (S02_shoulder_compare_train.ipynb)
+# I_ML for front AND side views (E3 median error: front 5.6 deg, side 9.1 deg).
+# The pre-registered rule picked the curve for the front view; I_ML is used for all
+# views so the shoulder works like the elbow (one model, side-on allowed).
+shoulder_angle:
+  method: ML                                                # ML = shoulder I_ML; A = raw 2D hip-shoulder-elbow angle
+  iml_model: data/iml_shoulder_rehab24.txt                  # trained on REHAB24-6 only (licence)
+  fallback_calibration: data/population_curve_shoulder_front.json   # first ~1 s and frames without features
