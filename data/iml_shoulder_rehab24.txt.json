@@ -31,9 +31,15 @@
   "verbosity": -1
  },
  "choice_per_view": {
+  "front": "iml",
+  "profile": "iml"
+ },
+ "rule_choice_per_view": {
   "front": "curve",
   "profile": "iml"
  },
+ "decision_note": "Pre-registered rule chose curve for front (I_ML gain 2.55 deg < 3 deg) and I_ML for profile. Deployed: I_ML for all views, for consistency with the elbow and one model for front and side; the population curve (population_curve_shoulder_front.json) is kept as the fallback.",
+ "fallback_curve": "population_curve_shoulder_front.json",
  "trained_on": "REHAB24-6 Ex1 + Ex2 only (CC BY-NC), streaming features",
  "cv_E3_median_mae": {
   "front": 5.56,

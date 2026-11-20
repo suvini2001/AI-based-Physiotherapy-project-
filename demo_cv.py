@@ -5,6 +5,7 @@
   python demo_cv.py --calibration data/user_calibration.json
   python demo_cv.py --source data/elbow_A_laptop.mp4        (replay a clip)
   python demo_cv.py --variant ML                            (learned I_ML angle, curve as fallback)
+  python demo_cv.py --exercise shoulder --side right        (shoulder I_ML, front OR side view, from config.yaml)
   python demo_cv.py --no-overlay                            (FPS without drawing)
 Commit 1 (Person A): the loop, variants A and B, calibration. Commit 2 (Person B): yaw message, variant C, gate."""
 import argparse, json, os, sys, time
@@ -42,15 +43,19 @@ class AnglePipeline:
     """One frame in, one cleaned angle out. Separate from the window so it can be tested without a camera."""
 
     def __init__(self, joint, variant, size, fps, thr, max_gap, calibration=None, side="right",
-                 iml_model=None):
+                 iml_model=None, exercise="elbow"):
         self.joint, self.variant, self.size, self.side = joint, variant, size, side
+        self.exercise = exercise
         self.thr, self.max_gap, self.calibration = thr, max_gap, calibration
         self.win_norm, self.win_world = deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.recent = deque(maxlen=SPIKE_WINDOW)
         self.smoother = OneEuroFilter(fs=fps)
         self.iml, self.last_source = None, None
         self.source_counts = {"ML": 0, "curve": 0, "raw": 0}   # which method produced each angle
-        if variant == "ML":
+        if variant == "ML" and exercise == "shoulder":
+            from shoulder_live import ShoulderIMLStream      # own features and model (S02)
+            self.iml = ShoulderIMLStream(iml_model, side=side, size=size, fps=fps, threshold=thr)
+        elif variant == "ML":
             from iml_live import IMLStream
             self.iml = IMLStream(iml_model, side=side, size=size, fps=fps, threshold=thr)
 
@@ -121,15 +126,44 @@ class AnglePipeline:
         return clean, ang
 
 
-def resolve_angle_method(variant, iml_model, calibration, angle_cfg, exercise="elbow"):
-    """Command-line values win; otherwise config.yaml `angle:` decides.
-    A missing I_ML model never stops a session: it falls back to variant A + curve.
-    I_ML and the population curve are ELBOW models: any other exercise uses the plain
-    2D angle of its own joint (variant A) with no curve."""
+def _curve_joint(path):
+    """'shoulder' for a shoulder curve, 'elbow' for everything else (old curves have no 'joint')."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh).get("joint", "elbow")
+    except (OSError, ValueError):
+        return "elbow"
+
+
+def resolve_angle_method(variant, iml_model, calibration, angle_cfg, exercise="elbow",
+                         shoulder_cfg=None):
+    """Command-line values win; otherwise config.yaml decides
+    (`angle:` for the elbow, `shoulder_angle:` for the shoulder).
+    A missing I_ML model never stops a session: it falls back to variant A (+ curve).
+    Each joint only ever gets its OWN models: an elbow model or curve is never applied
+    to the shoulder, and without a `shoulder_angle:` section the shoulder keeps the
+    plain 2D angle (variant A) with no curve, as before."""
     angle_cfg = angle_cfg or {}
+    if exercise == "shoulder" and shoulder_cfg:
+        if variant == "C":
+            print("WARNING: variant C is the ELBOW yaw correction - shoulder uses variant A instead")
+            variant = "A"
+        variant = variant or shoulder_cfg.get("method", "A")
+        iml_model = iml_model or shoulder_cfg.get("iml_model", "data/iml_shoulder_rehab24.txt")
+        if calibration is not None and _curve_joint(calibration) != "shoulder":
+            print(f"WARNING: {calibration} is an elbow curve - not applied to shoulder")
+            calibration = None
+        if variant == "ML" and calibration is None:
+            fb = shoulder_cfg.get("fallback_calibration")
+            calibration = fb if fb and os.path.exists(fb) else None
+        if variant == "ML" and not (os.path.exists(iml_model) and os.path.exists(iml_model + ".json")):
+            print(f"WARNING: shoulder I_ML model {iml_model} (+ .json) not found - using variant A"
+                  + (" + shoulder curve" if calibration else "") + " instead")
+            variant = "A"
+        return variant, iml_model, calibration
     if exercise != "elbow":
         if variant == "ML" or (variant is None and angle_cfg.get("method") == "ML"):
-            print(f"Angle: {exercise} uses the 2D angle (variant A); I_ML is trained for the elbow only")
+            print(f"Angle: {exercise} uses the 2D angle (variant A); no I_ML model configured for it")
         if variant == "C":
             print(f"WARNING: variant C is the ELBOW yaw correction - {exercise} uses variant A instead")
         variant = "A" if variant in (None, "ML", "C") else variant
@@ -138,6 +172,9 @@ def resolve_angle_method(variant, iml_model, calibration, angle_cfg, exercise="e
         return variant, iml_model or angle_cfg.get("iml_model"), None
     variant = variant or angle_cfg.get("method", "A")
     iml_model = iml_model or angle_cfg.get("iml_model", "data/iml_nolook_rehab24_exp_torso.txt")
+    if calibration is not None and _curve_joint(calibration) == "shoulder":
+        print(f"WARNING: {calibration} is a shoulder curve - not applied to elbow")
+        calibration = None
     if variant == "ML" and calibration is None:
         fb = angle_cfg.get("fallback_calibration")
         calibration = fb if fb and os.path.exists(fb) else None
@@ -145,6 +182,12 @@ def resolve_angle_method(variant, iml_model, calibration, angle_cfg, exercise="e
         print(f"WARNING: I_ML model {iml_model} (+ .json) not found - using variant A + curve instead")
         variant = "A"
     return variant, iml_model, calibration
+
+
+def needs_front_view(exercise, variant):
+    """Only the raw 2D shoulder angle needs the patient to face the camera.
+    The shoulder I_ML model was trained and tested on front AND side views."""
+    return exercise == "shoulder" and variant != "ML"
 
 
 def main():
@@ -170,7 +213,8 @@ def main():
     cfg          = load_config()
     thr, max_gap = cfg["visibility_threshold"], cfg["max_gap_frames"]
     args.variant, args.iml_model, args.calibration = resolve_angle_method(
-        args.variant, args.iml_model, args.calibration, cfg.get("angle"), exercise=args.exercise)
+        args.variant, args.iml_model, args.calibration, cfg.get("angle"), exercise=args.exercise,
+        shoulder_cfg=cfg.get("shoulder_angle"))
     calibration  = load_params(args.calibration) if args.calibration else None
     if args.variant == "ML":
         print(f"Angle: I_ML {os.path.basename(args.iml_model)}"
@@ -184,7 +228,8 @@ def main():
     joint        = JOINTS[args.exercise][args.side]
     pipe         = AnglePipeline(joint, args.variant, size,
                                  src.fps(), thr, max_gap, calibration, side=args.side,
-                                 iml_model=args.iml_model)
+                                 iml_model=args.iml_model, exercise=args.exercise)
+    front_only   = needs_front_view(args.exercise, args.variant)
 
     # ── scorer ──────────────────────────────────────────────────────
     exercise_name = ("elbow_flexion_left" if args.exercise == "elbow" and args.side == "left"
@@ -294,6 +339,8 @@ def main():
             if not _announced_ready and timestamp > 0.1:
                 audio_feedback.speak(
                     "Get ready. Stand still, facing the camera, with your whole upper body in view."
+                    if front_only else
+                    "Get ready. Stand still, facing the camera or side-on, with your whole upper body in view."
                     if args.exercise == "shoulder" else
                     "Get ready. Stand still and face the camera.",
                     priority=True)
@@ -344,11 +391,12 @@ def main():
             state, _ = fsm.update(ang, timestamp, landmarks=clean)
             push_live_frame(state, ang, fsm.rep_count, timestamp)
 
-        # shoulder abduction is only measured correctly facing the camera
+        # shoulder: record the view; the raw 2D angle (variant A) also needs a front view,
+        # the shoulder I_ML model works front or side-on, so it gets no warning
         if args.exercise == "shoulder":
             view = front_view_status(clean, size)
             view_frames[view] = view_frames.get(view, 0) + 1
-            turned_since = (turned_since or timestamp) if view == "turn" else None
+            turned_since = (turned_since or timestamp) if (view == "turn" and front_only) else None
             view_warning = turned_since is not None and timestamp - turned_since >= 1.0
             if view_warning and timestamp - last_view_speech >= 8.0:
                 audio_feedback.speak("Please face the camera.", priority=True)
@@ -449,13 +497,19 @@ def main():
         session["angle_method"] = {
             "variant": args.variant,
             "iml_model": os.path.basename(args.iml_model) if args.variant == "ML" else None,
-            "feature_stream": (pipe.iml.meta.get("feature_stream", {"session": "window", "scale": "shoulder"})
+            "feature_stream": ((pipe.iml.meta.get("feature_code") if args.exercise == "shoulder"
+                                else pipe.iml.meta.get("feature_stream", {"session": "window", "scale": "shoulder"}))
                                if pipe.iml is not None else None),
+            "fallback_curve": os.path.basename(args.calibration) if args.calibration else None,
             "share_of_frames": {k: round(v / total, 3) for k, v in pipe.source_counts.items()},
         }
         if view_frames:      # shoulder: how much of the session was really a front view
             seen = sum(view_frames.values()) or 1
             session["front_view_share"] = round(view_frames.get("ok", 0) / seen, 3)
+            session["view_share"] = {"front": round(view_frames.get("ok", 0) / seen, 3),
+                                     "side": round(view_frames.get("turn", 0) / seen, 3),
+                                     "unknown": round(view_frames.get("unknown", 0) / seen, 3)}
+            session["front_view_required"] = front_only
         with open(args.session_out, "w") as f:
             json.dump(session, f, indent=2)
     else:
