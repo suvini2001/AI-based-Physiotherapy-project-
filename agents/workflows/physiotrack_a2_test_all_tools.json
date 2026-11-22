@@ -1,0 +1,352 @@
+{
+  "name": "PhysioTrack A2 - Test All 3 Read Tools (9 checks)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "8bcb169c-cfd1-46b5-8b0d-5151c1d1d6f9",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        160,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Two tests: built-in dev fixture + real-style case_file passed by the parent.\nconst realistic = {\n  prescription: {exercise:'elbow_flexion', target_reps:5, target_rom:100},\n  metrics: {reps_vs_target_pct:60, rom_vs_target_pct:80, fault_counts:{TRUNK_LEAN:2},\n            fast_rep_share:0, rom_slope_deg_per_session:null, baseline_rom:null,\n            quality_band:'fair', incomplete_attempts:0, sessions_in_history:0},\n  rule_flags:[{code:'LOW_COMPLETION',severity:'medium',source:'rule',evidence:'Synthetic test flag'}],\n  session:{session_id:101, exercise:'elbow_flexion',total_reps:3,mean_rom:80,mean_quality:0.60,reps:[]},\n  history:[]\n};\nreturn [{json:{}}, {json:{case_file:realistic}}];\n"
+      },
+      "id": "f5cf0569-f1c7-42db-8140-10d1f8678969",
+      "name": "Prepare Case Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        390,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "a7cee4be-b7bc-4f10-b918-c91dfa9b4928",
+      "name": "SELECT workflow: A2 Tool - get_case_file",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        650,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().map((item, i) => {\n  const x = item.json || {}, m = x.metrics || {}, f = Array.isArray(x.rule_flags) ? x.rule_flags : [];\n  let name = 'unexpected-case', pass = false;\n  if (m.reps_vs_target_pct === 100) {\n    name = 'get_case_file / built-in dev fixture';\n    pass = x.prescription?.target_reps === 10 && m.fault_counts?.SHOULDER_HIKE === 3\n           && f.some(z => z.code === 'ROM_DROP' && z.severity === 'high') && !('reps' in x);\n  } else if (m.reps_vs_target_pct === 60) {\n    name = 'get_case_file / supplied case file';\n    pass = x.prescription?.target_reps === 5 && m.fault_counts?.TRUNK_LEAN === 2\n           && f.some(z => z.code === 'LOW_COMPLETION') && !('reps' in x);\n  }\n  return {json:{tool:'get_case_file',test:name,pass,output:x}};\n});\n"
+      },
+      "id": "57a99ffb-827e-4c48-8238-da0f237398bd",
+      "name": "Assert Case Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        910,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Four calls, one per input item (Execute Sub-workflow mode = each).\nconst realistic = {\n  prescription:{exercise:'elbow_flexion',target_reps:5,target_rom:100},\n  metrics:{fault_counts:{TRUNK_LEAN:1}}, rule_flags:[], history:[],\n  session:{session_id:101,exercise:'elbow_flexion',reps:[\n    {rep_number:1,max_angle:120,min_angle:30,rom:90,duration_s:2.0,quality_score:0.8,faults:[{code:'TRUNK_LEAN'}]}\n  ]}\n};\nreturn [\n  {json:{rep_number:8}},\n  {json:{rep_number:2}},\n  {json:{rep_number:99}},\n  {json:{rep_number:1,case_file:realistic}},\n];\n"
+      },
+      "id": "273b3e77-fe9e-4f48-9719-f5a5e225f0ec",
+      "name": "Prepare Rep Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        390,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "5f2f1f1a-6d85-4390-9917-719740a15415",
+      "name": "SELECT workflow: A2 Tool - get_rep_details",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        650,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().map(item => {\n  const x = item.json || {};\n  let name = 'unexpected-rep', pass = false;\n  if (x.found === true && x.rep_number === 8) {\n    name = 'get_rep_details / rep 8 SHOULDER_HIKE';\n    pass = x.faults?.includes('SHOULDER_HIKE') && x.duration_s === 2.1;\n  } else if (x.found === true && x.rep_number === 2) {\n    name = 'get_rep_details / rep 2 clean';\n    pass = Array.isArray(x.faults) && x.faults.length === 0;\n  } else if (x.found === false && Number(x.rep_number) === 99) {\n    name = 'get_rep_details / rep 99 missing';\n    pass = x.available_rep_numbers?.length === 10 && x.available_rep_numbers.includes(8);\n  } else if (x.found === true && x.rep_number === 1 && x.rom === 90) {\n    name = 'get_rep_details / supplied case file';\n    pass = x.faults?.includes('TRUNK_LEAN') && x.min_angle === 30 && x.max_angle === 120;\n  }\n  return {json:{tool:'get_rep_details',test:name,pass:!!pass,output:x}};\n});\n"
+      },
+      "id": "4bf741e8-9926-41cb-9b35-5aec865da96f",
+      "name": "Assert Rep Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        910,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Three calls: new fault, absent fault, and a historical fault with a supplied real-style case file.\nconst realistic = {\n  prescription:{exercise:'elbow_flexion',target_reps:5,target_rom:100},\n  metrics:{fault_counts:{TRUNK_LEAN:1}}, rule_flags:[],\n  session:{session_id:101,exercise:'elbow_flexion',reps:[]},\n  history:[\n    {session_id:100,date:'2026-11-17',fault_counts:{TRUNK_LEAN:2}},\n    {session_id:99,date:'2026-11-15',fault_counts:{TRUNK_LEAN:1}},\n  ]\n};\nreturn [\n  {json:{fault_code:'SHOULDER_HIKE'}},\n  {json:{fault_code:'TOO_FAST'}},\n  {json:{fault_code:'TRUNK_LEAN',case_file:realistic}},\n];\n"
+      },
+      "id": "5060e85d-b36a-415b-925b-fa48bb6cb999",
+      "name": "Prepare Fault Tests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        390,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "59fc8572-699d-416a-acfb-6c1077d667b1",
+      "name": "SELECT workflow: A2 Tool - get_fault_history",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        650,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().map(item => {\n  const x = item.json || {};\n  let name = 'unexpected-fault', pass = false;\n  if (x.fault_code === 'SHOULDER_HIKE') {\n    name = 'get_fault_history / new SHOULDER_HIKE';\n    pass = x.current_session_count === 3 && x.total_in_history === 0\n           && x.is_new_this_session === true && x.seen_in_history === false;\n  } else if (x.fault_code === 'TOO_FAST') {\n    name = 'get_fault_history / absent TOO_FAST';\n    pass = x.current_session_count === 0 && x.total_in_history === 0\n           && x.is_new_this_session === false;\n  } else if (x.fault_code === 'TRUNK_LEAN') {\n    name = 'get_fault_history / supplied historical TRUNK_LEAN';\n    pass = x.current_session_count === 1 && x.total_in_history === 3\n           && x.seen_in_history === true && x.is_new_this_session === false\n           && x.history?.length === 2;\n  }\n  return {json:{tool:'get_fault_history',test:name,pass:!!pass,output:x}};\n});\n"
+      },
+      "id": "f673b425-ce59-4df8-9238-187ba137a1cf",
+      "name": "Assert Fault Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        910,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 3
+      },
+      "id": "6e96afc4-17e3-440b-8f37-ae91b6b669fb",
+      "name": "Combine 3 Test Branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1180,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const tests = $input.all().map(item => item.json);\nconst passed = tests.filter(x => x.pass === true).length;\nconst failed = tests.filter(x => x.pass !== true).length;\nreturn [{json:{\n  status: failed === 0 && tests.length === 9 ? 'PASS' : 'FAIL',\n  passed, failed, total: tests.length, expected_total: 9,\n  note: 'These checks execute the SELECTED published A2 sub-workflows; no LLM or patient data is needed.',\n  results: tests.map(({tool,test,pass,output}) => ({tool,test,pass,output})),\n}}];\n"
+      },
+      "id": "625d8980-4a69-4738-8d60-aabd7b18293f",
+      "name": "FINAL A2 TEST REPORT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1430,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## A2 sub-workflow integration tests (9 checks)\n**Before running:** Open each orange Execute Sub-workflow node and select the matching **already-imported/published** A2 workflow from the Workflow dropdown. The imported JSON cannot know your local workflow IDs.\n\nEach branch calls the actual selected sub-workflow with dev and supplied case-file examples. **Run once for each item** is intentionally set because the A2 Code nodes read `$input.first()`.\n\nClick **Execute workflow** → inspect **FINAL A2 TEST REPORT**: PASS means 9/9 checks pass. If an orange node errors, check the workflow selector and sub-workflow call permissions. No cloud model or real patient data is used.",
+        "height": 278,
+        "width": 720,
+        "color": 4
+      },
+      "id": "1ba21807-1ecd-4696-aa1b-78658a47f8e7",
+      "name": "READ ME - configure 3 workflow selectors",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        130,
+        -340
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Case Tests",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Rep Tests",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Fault Tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Case Tests": {
+      "main": [
+        [
+          {
+            "node": "SELECT workflow: A2 Tool - get_case_file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SELECT workflow: A2 Tool - get_case_file": {
+      "main": [
+        [
+          {
+            "node": "Assert Case Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assert Case Results": {
+      "main": [
+        [
+          {
+            "node": "Combine 3 Test Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Rep Tests": {
+      "main": [
+        [
+          {
+            "node": "SELECT workflow: A2 Tool - get_rep_details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SELECT workflow: A2 Tool - get_rep_details": {
+      "main": [
+        [
+          {
+            "node": "Assert Rep Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assert Rep Results": {
+      "main": [
+        [
+          {
+            "node": "Combine 3 Test Branches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Prepare Fault Tests": {
+      "main": [
+        [
+          {
+            "node": "SELECT workflow: A2 Tool - get_fault_history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SELECT workflow: A2 Tool - get_fault_history": {
+      "main": [
+        [
+          {
+            "node": "Assert Fault Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assert Fault Results": {
+      "main": [
+        [
+          {
+            "node": "Combine 3 Test Branches",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Combine 3 Test Branches": {
+      "main": [
+        [
+          {
+            "node": "FINAL A2 TEST REPORT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
