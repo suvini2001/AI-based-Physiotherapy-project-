@@ -1,0 +1,51 @@
+{
+  "name": "A2 Tool - get_rep_details",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "trigrep0-0000-0000-0000-0000000000000000",
+      "name": "When Called by Agent"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Dev fixture: used when the agent/orchestrator passes no real data.\n// At integration the orchestrator passes the real case file; this is then ignored.\nconst DEV_CASE_FILE = {\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":71,\"fault_counts\":{\"SHOULDER_HIKE\":3},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":-3.46,\"baseline_rom\":99.7,\"quality_band\":\"fair\",\"incomplete_attempts\":0,\"sessions_in_history\":6},\"rule_flags\":[{\"code\":\"ROM_DROP\",\"severity\":\"high\",\"source\":\"rule\",\"evidence\":\"mean ROM 15% below the 3-session baseline\"},{\"code\":\"NEW_COMPENSATION\",\"severity\":\"medium\",\"source\":\"rule\",\"evidence\":\"SHOULDER_HIKE not seen in history\"}],\"session\":{\"session_id\":7,\"date\":\"2026-11-13T15:20:00\",\"exercise\":\"elbow_flexion\",\"total_reps\":10,\"mean_rom\":85,\"mean_quality\":0.72,\"incomplete_attempts\":0,\"reps\":[{\"rep_number\":1,\"max_angle\":125,\"min_angle\":35,\"rom\":100,\"duration_s\":2.1,\"quality_score\":0.78,\"faults\":[]},{\"rep_number\":2,\"max_angle\":125,\"min_angle\":35,\"rom\":100,\"duration_s\":2.1,\"quality_score\":0.78,\"faults\":[]},{\"rep_number\":3,\"max_angle\":125,\"min_angle\":35,\"rom\":100,\"duration_s\":2.1,\"quality_score\":0.78,\"faults\":[]},{\"rep_number\":4,\"max_angle\":125,\"min_angle\":35,\"rom\":100,\"duration_s\":2.1,\"quality_score\":0.78,\"faults\":[]},{\"rep_number\":5,\"max_angle\":125,\"min_angle\":35,\"rom\":100,\"duration_s\":2.1,\"quality_score\":0.78,\"faults\":[]},{\"rep_number\":6,\"max_angle\":125,\"min_angle\":35,\"rom\":100,\"duration_s\":2.1,\"quality_score\":0.78,\"faults\":[]},{\"rep_number\":7,\"max_angle\":125,\"min_angle\":35,\"rom\":100,\"duration_s\":2.1,\"quality_score\":0.78,\"faults\":[]},{\"rep_number\":8,\"max_angle\":112,\"min_angle\":35,\"rom\":80,\"duration_s\":2.1,\"quality_score\":0.6,\"faults\":[{\"code\":\"SHOULDER_HIKE\",\"fault_text\":\"shoulder lifts during the rep\"}]},{\"rep_number\":9,\"max_angle\":112,\"min_angle\":35,\"rom\":80,\"duration_s\":2.1,\"quality_score\":0.6,\"faults\":[{\"code\":\"SHOULDER_HIKE\",\"fault_text\":\"shoulder lifts during the rep\"}]},{\"rep_number\":10,\"max_angle\":112,\"min_angle\":35,\"rom\":80,\"duration_s\":2.1,\"quality_score\":0.6,\"faults\":[{\"code\":\"SHOULDER_HIKE\",\"fault_text\":\"shoulder lifts during the rep\"}]}]},\"history\":[{\"session_id\":6,\"date\":\"2026-11-11\",\"total_reps\":10,\"mean_rom\":92,\"mean_quality\":0.74,\"fault_counts\":{}},{\"session_id\":5,\"date\":\"2026-11-09\",\"total_reps\":10,\"mean_rom\":100,\"mean_quality\":0.75,\"fault_counts\":{}},{\"session_id\":4,\"date\":\"2026-11-07\",\"total_reps\":10,\"mean_rom\":107,\"mean_quality\":0.76,\"fault_counts\":{}},{\"session_id\":3,\"date\":\"2026-11-05\",\"total_reps\":10,\"mean_rom\":105,\"mean_quality\":0.75,\"fault_counts\":{}},{\"session_id\":2,\"date\":\"2026-11-03\",\"total_reps\":10,\"mean_rom\":106,\"mean_quality\":0.74,\"fault_counts\":{}},{\"session_id\":1,\"date\":\"2026-11-01\",\"total_reps\":10,\"mean_rom\":105,\"mean_quality\":0.73,\"fault_counts\":{}}]};\n\n// Normalise whatever arrives into a single case-file shape.\n// Accepts: {case_file:{...}}, or {ev, metrics, rule_flags}, or nothing (-> dev fixture).\nfunction caseFile(q) {\n  const raw = (q && q.case_file) ? q.case_file : ((q && (q.ev || q.metrics || q.session)) ? q : null);\n  if (!raw) return DEV_CASE_FILE;\n  const ev = raw.ev || raw;\n  return {\n    prescription: raw.prescription || ev.prescription || DEV_CASE_FILE.prescription,\n    metrics:      raw.metrics      || DEV_CASE_FILE.metrics,\n    rule_flags:   raw.rule_flags   || [],\n    session:      raw.session      || ev.session  || DEV_CASE_FILE.session,\n    history:      raw.history      || ev.history  || DEV_CASE_FILE.history,\n  };\n}\nconst q = $input.first().json || {};\nconst cf = caseFile(q);\nconst want = Number(q.rep_number);\nconst reps = Array.isArray(cf.session.reps) ? cf.session.reps : [];\nconst rep = reps.find(r => r.rep_number === want);\nif (!rep) {\n  return [{ json: { found: false, rep_number: q.rep_number, available_rep_numbers: reps.map(r => r.rep_number) } }];\n}\nreturn [{ json: {\n  found: true,\n  rep_number: rep.rep_number,\n  max_angle: rep.max_angle,\n  min_angle: rep.min_angle,\n  rom: rep.rom,\n  duration_s: rep.duration_s,\n  quality_score: rep.quality_score,\n  faults: (rep.faults || []).map(f => f.code),\n} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "id": "coderep0-0000-0000-0000-0000000000000000",
+      "name": "A2 Tool - get_rep_details"
+    }
+  ],
+  "connections": {
+    "When Called by Agent": {
+      "main": [
+        [
+          {
+            "node": "A2 Tool - get_rep_details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
