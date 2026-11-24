@@ -35,3 +35,9 @@ psycopg[binary]>=3.1
 
 # Testing
 pytest>=7.0.0
+
+#env
+python-dotenv>=1.0.0
+
+#network part
+alembic>=1.13.0

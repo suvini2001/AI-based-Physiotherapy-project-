@@ -7,6 +7,9 @@ import string
 import subprocess
 import sys
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -64,7 +67,7 @@ Base.metadata.create_all(bind=engine)
 
 # Existing clinician demo authentication is retained.
 # It must be replaced before production use.
-SECRET_KEY = "physio-secret-key-change-in-production-2026"
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
