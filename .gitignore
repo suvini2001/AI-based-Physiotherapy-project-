@@ -4,6 +4,7 @@ __pycache__/
 data/*.mp4
 dataset
 results
+node_modules/
 
 # Participant & volunteer session recordings (privacy & research ethics)
 session_log.json
@@ -33,3 +34,10 @@ offline_queue.json
 # Browser test artifacts
 dashboard/test-results/
 dashboard/playwright-report/
+
+# Research environments and tracking artifacts
+fit3d dataset
+mlflow.db
+mlruns/
+mlartifacts/
+.venv-mlflow/

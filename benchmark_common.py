@@ -2,7 +2,7 @@
 import glob
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, lfilter, lfilter_zi
 from angles import angle, elbow_angle_3d_ordered
 from filters import fill_gaps
 
@@ -49,11 +49,17 @@ def butterworth_filter(data, fs=30.0, cutoff=6.0, order=2, causal=False):
     normal_cutoff = min(cutoff / nyq, 0.99)
     b, a = butter(order, normal_cutoff, btype="low", analog=False)
 
-    padlen = 3 * max(len(a), len(b))
-    if len(filled) <= padlen:
-        res = filled
+    if causal:
+        # one forward pass, filter state started at the first sample:
+        # the only kind of filtering a live system can run
+        zi = lfilter_zi(b, a) * filled[0]
+        res, _ = lfilter(b, a, filled, zi=zi)
     else:
-        res = filtfilt(b, a, filled)
+        padlen = 3 * max(len(a), len(b))
+        if len(filled) <= padlen:
+            res = filled
+        else:
+            res = filtfilt(b, a, filled)
 
     res[nan_mask] = np.nan
     return res

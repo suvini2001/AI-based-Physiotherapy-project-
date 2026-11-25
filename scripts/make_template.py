@@ -6,6 +6,13 @@ Run: python scripts/make_template.py
 """
 import numpy as np, json, os
 
+import json, os
+if os.path.exists('template.json'):
+    t = json.load(open('template.json'))
+    if t.get('calibrated'):
+        print('ERROR: template.json is already calibrated. Delete it manually first.')
+        exit(1)
+        
 n = 100
 # clean elbow flexion: 162 -> 40 -> 162
 half = n // 2

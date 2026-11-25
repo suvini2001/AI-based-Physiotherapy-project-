@@ -1,0 +1,4 @@
+# Separate venv (.venv-mlflow): MLflow needs protobuf >= 5, which breaks mediapipe 0.10.14
+mlflow==3.18.0
+pandas>=2.0.0
+numpy>=1.24.0
