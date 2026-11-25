@@ -1,3 +1,8 @@
+import os
+from dotenv import load_dotenv
+
+# Load .env so DATABASE_URL is available to Alembic
+load_dotenv(override=True)
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -41,7 +46,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")    
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -54,12 +59,11 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
+    # Override the URL from .env if set, ignoring alembic.ini's value
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        config.set_main_option("sqlalchemy.url", db_url)
 
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

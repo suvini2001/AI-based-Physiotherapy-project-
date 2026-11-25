@@ -348,3 +348,49 @@ class PhysioPatient(Base):
     )
 
     patient = relationship("Patient")
+
+    # ==================================================
+# AUDIT LOG
+# (every doctor view and export is recorded here)
+# ==================================================
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
+
+    # who did it
+    physio_id = Column(
+        String(20),
+        nullable=False,
+        index=True,
+    )
+
+    # what they did: "view_patient", "view_session",
+    #                "view_reps", "export_session"
+    action = Column(
+        String(50),
+        nullable=False,
+    )
+
+    # which patient was involved
+    patient_id = Column(
+        Integer,
+        ForeignKey("patients.id"),
+        nullable=True,
+    )
+
+    # extra detail e.g. session_id for view_session
+    detail = Column(
+        String(200),
+        nullable=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        nullable=False,
+    )
