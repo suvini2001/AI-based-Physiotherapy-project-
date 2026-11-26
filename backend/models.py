@@ -98,6 +98,13 @@ class Prescription(Base):
         back_populates="prescriptions",
     )
 
+    contract_version = Column(
+        Integer,
+        default=1,
+        nullable=False,
+        server_default="1",
+    )
+
 
 # ==================================================
 # EXERCISE SESSION MODEL
@@ -138,6 +145,13 @@ class Session(Base):
         "Rep",
         back_populates="session",
         cascade="all, delete-orphan",
+    )
+
+    session_uuid = Column(
+        String(36),
+        unique=True,
+        nullable=True,   # nullable so old sessions aren't broken
+        index=True,
     )
 
 
@@ -204,4 +218,179 @@ class Fault(Base):
     rep = relationship(
         "Rep",
         back_populates="faults",
+    )
+
+# ==================================================
+# PHYSIO MODEL
+# (replaces the hardcoded PHYSIO_ACCOUNTS dict)
+# ==================================================
+
+class Physio(Base):
+    __tablename__ = "physios"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    physio_id = Column(
+        String(20),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
+    name = Column(
+        String(150),
+        nullable=False,
+    )
+
+    specialty = Column(String(150))
+
+    password_hash = Column(
+        String(255),
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+    )
+
+    patients = relationship(
+        "PhysioPatient",
+        back_populates="physio",
+    )
+
+
+# ==================================================
+# DEVICE MODEL
+# (one row per patient device — holds the device token)
+# ==================================================
+
+class Device(Base):
+    __tablename__ = "devices"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
+
+    patient_id = Column(
+        Integer,
+        ForeignKey("patients.id"),
+        nullable=False,
+    )
+
+    device_token = Column(
+        String(64),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
+    # human-readable label e.g. "Chamodi's phone"
+    label = Column(String(100))
+
+    created_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+    )
+
+    last_seen_at = Column(
+        DateTime,
+        nullable=True,
+    )
+
+    # set when the device is revoked (stolen phone)
+    revoked_at = Column(
+        DateTime,
+        nullable=True,
+    )
+
+    patient = relationship("Patient")
+
+
+# ==================================================
+# PHYSIO-PATIENT ASSIGNMENT
+# (which physio looks after which patient)
+# ==================================================
+
+class PhysioPatient(Base):
+    __tablename__ = "physio_patient"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
+
+    physio_id = Column(
+        Integer,
+        ForeignKey("physios.id"),
+        nullable=False,
+    )
+
+    patient_id = Column(
+        Integer,
+        ForeignKey("patients.id"),
+        nullable=False,
+    )
+
+    assigned_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+    )
+
+    physio = relationship(
+        "Physio",
+        back_populates="patients",
+    )
+
+    patient = relationship("Patient")
+
+    # ==================================================
+# AUDIT LOG
+# (every doctor view and export is recorded here)
+# ==================================================
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
+
+    # who did it
+    physio_id = Column(
+        String(20),
+        nullable=False,
+        index=True,
+    )
+
+    # what they did: "view_patient", "view_session",
+    #                "view_reps", "export_session"
+    action = Column(
+        String(50),
+        nullable=False,
+    )
+
+    # which patient was involved
+    patient_id = Column(
+        Integer,
+        ForeignKey("patients.id"),
+        nullable=True,
+    )
+
+    # extra detail e.g. session_id for view_session
+    detail = Column(
+        String(200),
+        nullable=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        nullable=False,
     )

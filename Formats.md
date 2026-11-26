@@ -23,3 +23,28 @@ Rule: neither of us changes these without telling the other.
 - Sample file: data/sample_angles.csv
 
 Naming clips and files: person_exercise_camera, for example elbow_A_laptop.mp4
+
+# Live Frame Binary Layout — v1
+
+Fixed 20-byte frame. Little-endian.
+
+| Offset | Bytes | Type   | Field        | Notes                          |
+|--------|-------|--------|--------------|--------------------------------|
+| 0      | 1     | uint8  | version      | Always 1                       |
+| 1      | 4     | float32| timestamp    | Seconds since session start    |
+| 5      | 4     | float32| joint_angle  | Degrees                        |
+| 9      | 1     | uint8  | state        | 0=READY 1=CALIB 2=COUNT        |
+| 10     | 2     | uint16 | rep_count    | 0–65535                        |
+| 12     | 1     | uint8  | fault_code   | 0=none, see fault table below  |
+| 13     | 7     | bytes  | reserved     | Zero-padded, for future use    |
+
+## Fault codes
+0 = no fault
+1 = elbow_too_low
+2 = body_sway
+3 = incomplete_rom
+
+## State codes
+0 = READY
+1 = CALIB
+2 = COUNT

@@ -6,6 +6,10 @@ import secrets
 import string
 import subprocess
 import sys
+import live_log
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -46,6 +50,8 @@ from models import (
     Session as SessionModel,
     Rep,
     Fault,
+    PhysioPatient,
+    AuditLog,
 )
 
 
@@ -64,7 +70,7 @@ Base.metadata.create_all(bind=engine)
 
 # Existing clinician demo authentication is retained.
 # It must be replaced before production use.
-SECRET_KEY = "physio-secret-key-change-in-production-2026"
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
@@ -102,17 +108,19 @@ oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="auth/login"
 )
 
+_PHYSIO_DEMO_PASSWORD = os.getenv("PHYSIO_DEMO_PASSWORD", "")
+
 PHYSIO_ACCOUNTS = {
     "DR001": {
         "id": "DR001",
         "name": "Dr. Priya Nair",
-        "password": "physio2026",
+        "password":  _PHYSIO_DEMO_PASSWORD,
         "specialty": "Orthopaedic Rehabilitation",
     },
     "DR002": {
         "id": "DR002",
         "name": "Dr. Kasun Perera",
-        "password": "physio2026",
+        "password":  _PHYSIO_DEMO_PASSWORD,
         "specialty": "Neurological Rehabilitation",
     },
 }
@@ -744,44 +752,224 @@ def set_prescription(
 
 
 # ============================================================
-# EXISTING LIVE MONITORING
-#
-# WARNING:
-# These legacy endpoints are not authenticated.
+# LIVE MONITORING — ROOMS + TICKETS + FRAME-AGE LOGGING
 # ============================================================
 
-active_ws: list[WebSocket] = []
+import uuid as _uuid
+from collections import defaultdict
 
+# One set of WebSocket connections per patient id
+# { patient_id (int) -> set of WebSocket }
+_rooms: dict[int, set] = defaultdict(set)
+
+# Short-lived ws-tickets
+# { ticket (str) -> {"patient_id": int, "physio_id": str, "expires": datetime} }
+_ws_tickets: dict[str, dict] = {}
+
+WS_TICKET_TTL_SECONDS = 30
+
+
+# ── Ticket endpoint ──────────────────────────────────────────
+
+@app.post("/api/ws-ticket")
+def issue_ws_ticket(
+    data: dict,
+    db: Session = Depends(get_db),
+    physio=Depends(get_current_physio),
+):
+    """
+    A physio requests a one-time ticket to open a WebSocket
+    for a specific patient's live feed.
+
+    Returns a ticket string valid for 30 seconds.
+    The ticket is consumed when the WebSocket handshake succeeds.
+    """
+    patient_id = data.get("patient_id")
+
+    if not isinstance(patient_id, int):
+        raise HTTPException(
+            status_code=400,
+            detail="patient_id must be an integer",
+        )
+
+    # Check the patient exists
+    patient = db.query(Patient).filter(
+        Patient.id == patient_id
+    ).first()
+
+    if patient is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Patient not found",
+        )
+
+    # Check the physio is assigned to this patient
+    assignment = db.query(PhysioPatient).filter(
+        PhysioPatient.patient_id == patient_id,
+        PhysioPatient.physio_id == physio["id"],
+    ).first()
+
+    if assignment is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Not assigned to this patient",
+        )
+
+    ticket = str(_uuid.uuid4())
+    expires = datetime.now(timezone.utc) + timedelta(
+        seconds=WS_TICKET_TTL_SECONDS
+    )
+
+    _ws_tickets[ticket] = {
+        "patient_id": patient_id,
+        "physio_id": physio["id"],
+        "expires": expires,
+    }
+
+    return {
+        "ticket": ticket,
+        "expires_in_seconds": WS_TICKET_TTL_SECONDS,
+    }
+
+
+# ── WebSocket endpoint ───────────────────────────────────────
 
 @app.websocket("/ws/live/{patient_id}")
 async def ws_live(
     ws: WebSocket,
     patient_id: int,
+    ticket: str = "",
 ):
+    """
+    Doctor connects to a patient's live room using a ticket.
+    Ticket is consumed on successful connect.
+    """
+    # Validate ticket before accepting the connection
+    ticket_data = _ws_tickets.get(ticket)
+
+    if ticket_data is None:
+        await ws.close(code=4401)
+        return
+
+    if ticket_data["patient_id"] != patient_id:
+        await ws.close(code=4403)
+        return
+
+    if datetime.now(timezone.utc) > ticket_data["expires"]:
+        del _ws_tickets[ticket]
+        await ws.close(code=4401)
+        return
+
+    # Consume the ticket — single use
+    del _ws_tickets[ticket]
+
     await ws.accept()
-    active_ws.append(ws)
+    _rooms[patient_id].add(ws)
 
     try:
         while True:
-            await ws.receive_text()
+            await ws.receive_text()   # keep alive; client sends heartbeats
     except Exception:
-        if ws in active_ws:
-            active_ws.remove(ws)
+        pass
+    finally:
+        _rooms[patient_id].discard(ws)
+        if not _rooms[patient_id]:
+            del _rooms[patient_id]
 
+
+# ── Frame push with frame-age logging ───────────────────────
 
 @app.post("/api/live_frame")
 async def push_frame(data: dict):
-    dead = []
+    """
+    Patient device pushes one live frame.
+    Server stamps it with server_ts and computes frame_age_ms.
+    Broadcasts only to doctors in that patient's room.
+    """
+    server_ts = datetime.now(timezone.utc).timestamp()
 
-    for ws in active_ws:
+    patient_id = data.get("patient_id")
+
+    # frame_age_ms: how old the frame is by the time the server sees it
+    client_ts = data.get("timestamp")
+    frame_age_ms = None
+    if isinstance(client_ts, (int, float)):
+        frame_age_ms = round((server_ts - client_ts) * 1000, 1)
+
+    # Attach server timestamp and age to the payload before broadcasting
+    enriched = {
+        **data,
+        "server_ts": round(server_ts, 3),
+        "frame_age_ms": frame_age_ms,
+    }
+
+    # Log frame age for the experiment (Week 8)
+    if frame_age_ms is not None:
+        print(
+            f"[live] patient={patient_id} "
+            f"frame_age={frame_age_ms}ms "
+            f"angle={data.get('joint_angle')} "
+            f"state={data.get('state')}"
+        )
+        
+        live_log.log_frame(
+            patient_id=patient_id,
+            server_ts=server_ts,
+            client_ts=client_ts,
+            frame_age_ms=frame_age_ms,
+            joint_angle=data.get("joint_angle"),
+            state=data.get("state"),
+            rep_count=data.get("rep_count"),
+            fault=data.get("fault"),
+        )
+
+    # Broadcast only to this patient's room
+    if patient_id is None:
+        # Legacy: broadcast to everyone (keeps old behaviour working)
+        targets = {ws for room in _rooms.values() for ws in room}
+    else:
+        targets = set(_rooms.get(int(patient_id), set()))
+
+    dead = set()
+    for ws in targets:
         try:
-            await ws.send_json(data)
+            await ws.send_json(enriched)
         except Exception:
-            dead.append(ws)
+            dead.add(ws)
 
+    # Clean up dead connections
     for ws in dead:
-        if ws in active_ws:
-            active_ws.remove(ws)
+        for room in _rooms.values():
+            room.discard(ws)
+
+    return {"ok": True, "frame_age_ms": frame_age_ms}
+
+# ── RTT report from client ───────────────────────────────────
+
+class RTTReport(BaseModel):
+    patient_id: int
+    server_ts: float   # the server_ts the client received in the frame
+    rtt_ms: float = Field(gt=0)      # client measured: (now - original_client_ts) * 1000
+
+
+@app.post("/api/live_rtt")
+async def receive_rtt(report: RTTReport):
+    """
+    Client reports the round-trip time for a frame.
+    The client measures: time it sent the frame → time it received
+    the enriched frame back from the server via WebSocket.
+    """
+    print(
+        f"[rtt] patient={report.patient_id} "
+        f"rtt={report.rtt_ms}ms "
+        f"server_ts={report.server_ts}"
+    )
+
+    live_log.log_rtt(
+        patient_id=report.patient_id,
+        server_ts=report.server_ts,
+        rtt_ms=report.rtt_ms,
+    )
 
     return {"ok": True}
 
@@ -1102,3 +1290,276 @@ def session_status(patient_id: str):
         "running": True,
         "pid": proc.pid,
     }
+
+# ============================================================
+# AUDIT LOGGING HELPER
+# ============================================================
+
+def audit(
+    db: Session,
+    physio_id: str,
+    action: str,
+    patient_id: int = None,
+    detail: str = None,
+):
+    """Record one audit log entry. Call this on every doctor view/export."""
+    entry = AuditLog(
+        physio_id=physio_id,
+        action=action,
+        patient_id=patient_id,
+        detail=detail,
+    )
+    db.add(entry)
+    db.commit()
+
+
+# ============================================================
+# WEEK 6 — NEEDS ATTENTION + LAST SYNCED API
+# ============================================================
+
+@app.get("/api/patients/{patient_id}/summary")
+def patient_summary(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    physio=Depends(get_current_physio),
+):
+    """
+    Returns the last 30 days of sessions, adherence score,
+    and a needs_attention flag for this patient.
+    Also writes an audit log entry.
+    """
+    from datetime import date
+    import json
+
+    patient = db.query(Patient).filter(
+        Patient.id == patient_id
+    ).first()
+
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    # Audit: doctor viewed this patient
+    audit(
+        db,
+        physio_id=physio["id"],
+        action="view_patient",
+        patient_id=patient_id,
+    )
+
+    # Last 30 days of sessions
+    thirty_days_ago = (
+        datetime.now(timezone.utc).date() -
+        timedelta(days=30)
+    ).isoformat()
+
+    sessions = db.query(SessionModel).filter(
+        SessionModel.patient_id == patient_id,
+        SessionModel.date >= thirty_days_ago,
+    ).order_by(SessionModel.date.desc()).all()
+
+    presc = latest_prescription(db, patient_id)
+    target_reps = presc.target_reps if presc else 10
+
+    # Adherence: percentage of sessions where total_reps >= target
+    if sessions:
+        met = sum(
+            1 for s in sessions
+            if s.total_reps is not None and s.total_reps >= target_reps
+        )
+        adherence_pct = round(met / len(sessions) * 100)
+    else:
+        adherence_pct = 0
+
+    # Last synced
+    last_session = sessions[0] if sessions else None
+
+    # Needs attention rules:
+    # 1. No session in the last 7 days
+    # 2. Adherence below 60%
+    # 3. Mean ROM dropping (last session ROM < average of previous 5)
+    needs_attention = False
+    attention_reasons = []
+
+    if not sessions:
+        needs_attention = True
+        attention_reasons.append("no_sessions_in_30_days")
+    else:
+        seven_days_ago = (
+            datetime.now(timezone.utc).date() -
+            timedelta(days=7)
+        ).isoformat()
+        recent = [s for s in sessions if s.date >= seven_days_ago]
+        if not recent:
+            needs_attention = True
+            attention_reasons.append("no_session_in_7_days")
+
+    if adherence_pct < 60:
+        needs_attention = True
+        attention_reasons.append("low_adherence")
+
+    if len(sessions) >= 6:
+        last_rom = sessions[0].mean_rom
+        prev_roms = [
+            s.mean_rom for s in sessions[1:6]
+            if s.mean_rom is not None
+        ]
+        if last_rom is not None and prev_roms:
+            avg_prev = sum(prev_roms) / len(prev_roms)
+            if last_rom < avg_prev * 0.85:   # ROM dropped >15%
+                needs_attention = True
+                attention_reasons.append("rom_declining")
+
+    return {
+        "patient_id": patient_id,
+        "name": patient.name,
+        "needs_attention": needs_attention,
+        "attention_reasons": attention_reasons,
+        "adherence_pct": adherence_pct,
+        "sessions_last_30_days": len(sessions),
+        "last_synced": last_session.date if last_session else None,
+        "last_rom": last_session.mean_rom if last_session else None,
+        "sessions": [
+            {
+                "id": s.id,
+                "date": s.date,
+                "total_reps": s.total_reps,
+                "mean_rom": s.mean_rom,
+                "mean_quality": s.mean_quality,
+            }
+            for s in sessions
+        ],
+    }
+
+
+@app.get("/api/patients/needs-attention")
+def patients_needing_attention(
+    db: Session = Depends(get_db),
+    physio=Depends(get_current_physio),
+):
+    """
+    Returns all patients assigned to this physio
+    who currently need attention.
+    """
+    # Get patients assigned to this physio
+    assignments = db.query(PhysioPatient).filter(
+        PhysioPatient.physio_id == physio["id"],
+    ).all()
+
+    result = []
+    for a in assignments:
+        patient = db.query(Patient).filter(
+            Patient.id == a.patient_id
+        ).first()
+        if patient is None:
+            continue
+
+        last = db.query(SessionModel).filter(
+            SessionModel.patient_id == a.patient_id
+        ).order_by(SessionModel.date.desc()).first()
+
+        seven_days_ago = (
+            datetime.now(timezone.utc).date() -
+            timedelta(days=7)
+        ).isoformat()
+
+        needs_attention = (
+            last is None or
+            last.date < seven_days_ago
+        )
+
+        if needs_attention:
+            result.append({
+                "patient_id": patient.id,
+                "name": patient.name,
+                "last_synced": last.date if last else None,
+                "reason": (
+                    "no_sessions_ever" if last is None
+                    else "no_session_in_7_days"
+                ),
+            })
+
+    return result
+
+
+@app.get("/api/sessions/{session_id}/reps-audited")
+def get_reps_audited(
+    session_id: int,
+    db: Session = Depends(get_db),
+    physio=Depends(get_current_physio),
+):
+    """
+    Same as get_reps but writes an audit log entry.
+    Use this endpoint from the doctor dashboard.
+    """
+    session = db.query(SessionModel).filter(
+        SessionModel.id == session_id
+    ).first()
+
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Audit: doctor viewed this session's reps
+    audit(
+        db,
+        physio_id=physio["id"],
+        action="view_session",
+        patient_id=session.patient_id,
+        detail=f"session_id={session_id}",
+    )
+
+    reps = db.query(Rep).filter(
+        Rep.session_id == session_id
+    ).all()
+
+    result = []
+    for r in reps:
+        faults = db.query(Fault).filter(
+            Fault.rep_id == r.id
+        ).all()
+        result.append({
+            "rep_number": r.rep_number,
+            "max_angle": r.max_angle,
+            "min_angle": r.min_angle,
+            "rom": r.rom,
+            "duration_s": r.duration_s,
+            "quality_score": r.quality_score,
+            "faults": [f.fault_text for f in faults],
+        })
+
+    return result
+
+
+@app.get("/api/audit-log")
+def get_audit_log(
+    patient_id: int = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    physio=Depends(get_current_physio),
+):
+    """
+    Returns audit log entries for this physio.
+    Optionally filter by patient_id.
+    """
+    query = db.query(AuditLog).filter(
+        AuditLog.physio_id == physio["id"]
+    )
+
+    if patient_id is not None:
+        query = query.filter(
+            AuditLog.patient_id == patient_id
+        )
+
+    entries = query.order_by(
+        AuditLog.created_at.desc()
+    ).limit(limit).all()
+
+    return [
+        {
+            "id": e.id,
+            "action": e.action,
+            "patient_id": e.patient_id,
+            "detail": e.detail,
+            "created_at": e.created_at.isoformat(),
+        }
+        for e in entries
+    ]

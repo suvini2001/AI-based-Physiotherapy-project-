@@ -1,0 +1,25 @@
+{
+  "started_at": "2026-11-26T12:36:37.301239",
+  "sessions_generated": 20,
+  "sent_online": 5,
+  "sent_offline_queued": 15,
+  "duplicates_sent": 5,
+  "sessions_on_server_before": 0,
+  "sessions_on_server_after": 0,
+  "expected_new_sessions": 20,
+  "upload_times_ms": [
+    2137.4,
+    2063.6,
+    2052.6,
+    2063.5,
+    2040.6
+  ],
+  "queue_flush_time_ms": 41540.8,
+  "passed": false,
+  "notes": [
+    "LOSS: expected 20, got 0"
+  ],
+  "mean_upload_ms": 2071.5,
+  "median_upload_ms": 2063.5,
+  "max_upload_ms": 2137.4
+}
