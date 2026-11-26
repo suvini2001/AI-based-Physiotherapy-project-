@@ -1,0 +1,293 @@
+{
+  "name": "A4 - Progress Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -60,
+        -60
+      ],
+      "id": "trigexec-0000-0000-0000-0000000000000000",
+      "name": "When Called by Supervisor"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        180
+      ],
+      "id": "trigman0-0000-0000-0000-0000000000000000",
+      "name": "Test Manually"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== TEST SCENARIO SWITCH =====================================================\n// Change this ONE word (keep the name SCENARIO on the left), Save, run the agent.\n// Options: improving | plateau | declining_safety | fast_and_sloppy | first_session\nconst SCENARIO = \"declining_safety\";\n// Integration: the Supervisor path skips this node and passes the real case_file.\n// ================================================================================\nconst SCENARIOS = {\"improving\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":87,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":1.87,\"baseline_rom\":102,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":8},\"rule_flags\":[]},\"plateau\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":83,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":0,\"baseline_rom\":100,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":8},\"rule_flags\":[]},\"declining_safety\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":71,\"fault_counts\":{\"SHOULDER_HIKE\":3},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":-3.46,\"baseline_rom\":92.3,\"quality_band\":\"fair\",\"incomplete_attempts\":0,\"sessions_in_history\":7},\"rule_flags\":[{\"code\":\"NEW_COMPENSATION\",\"severity\":\"medium\",\"source\":\"rule\",\"evidence\":\"SHOULDER_HIKE not seen in history\"}]},\"fast_and_sloppy\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":85,\"fault_counts\":{\"TOO_FAST\":3},\"fast_rep_share\":1,\"rom_slope_deg_per_session\":0.7,\"baseline_rom\":101,\"quality_band\":\"fair\",\"incomplete_attempts\":0,\"sessions_in_history\":3},\"rule_flags\":[{\"code\":\"NEW_COMPENSATION\",\"severity\":\"medium\",\"source\":\"rule\",\"evidence\":\"TOO_FAST not seen in history\"},{\"code\":\"RUSHED_REPS\",\"severity\":\"low\",\"source\":\"rule\",\"evidence\":\"majority of reps too fast\"}]},\"first_session\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":79,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":null,\"baseline_rom\":null,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":0},\"rule_flags\":[]}};\nreturn [{ json: { case_file: SCENARIOS[SCENARIO] } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        180
+      ],
+      "id": "load0000-0000-0000-0000-0000000000000000",
+      "name": "Load Scenario (test)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// The trend label is a verdict a physio relies on, so CODE sets it, not the model.\nconst input = $input.first().json || {};\nconst cf = input.case_file || input;\nconst m = (cf && cf.metrics) || {};\nconst slope = m.rom_slope_deg_per_session;\nconst sessions = (m.sessions_in_history != null) ? m.sessions_in_history : 0;\n\nlet trend;\nif (slope === null || slope === undefined || sessions < 2) trend = \"insufficient_data\";\nelse if (slope > 0.5)  trend = \"improving\";\nelse if (slope < -0.5) trend = \"declining\";\nelse                   trend = \"stable\";\n\nreturn [{ json: { case_file: cf, trend } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        40
+      ],
+      "id": "settrend-0000-0000-0000-0000000000000000",
+      "name": "Set Trend (code decides)"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "The system has already determined this session's trend as: {{ $json.trend }}.\nExplain the patient's progress for the physiotherapist. Copy that trend verbatim into your output. If it is insufficient_data, do not look up fault history. Otherwise use get_case_file and get_fault_history to find which faults are new or worsening, then produce the structured output.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Progress agent in a physiotherapy team. You explain how a patient is progressing across sessions.\n\nThe trend label has ALREADY been decided by the system and is given to you in the user message. Copy it into your output verbatim. NEVER change it or compute your own trend from the numbers.\n\nIf the trend is \"insufficient_data\":\n- Do NOT call get_fault_history (there is no history to compare).\n- Return trend \"insufficient_data\", an empty findings list, and one sentence saying this is an early session with no history yet.\n\nOtherwise:\n- Call get_case_file for the metrics and rule flags.\n- For each fault in this session, call get_fault_history to see if it is new or getting worse.\n- In findings, name the faults that are new or worsening, using the fault label exactly as the tools return it.\n\nUse only values from your tools and the given trend. Do not diagnose, give medical advice, or change the prescription.\nReturn: trend (verbatim), findings (0 to 3 short strings), summary_for_physio (2 to 3 plain sentences).",
+          "maxIterations": 4
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        620,
+        40
+      ],
+      "id": "agent000-0000-0000-0000-0000000000000000",
+      "name": "Progress Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        520,
+        300
+      ],
+      "id": "gem00000-0000-0000-0000-0000000000000000",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gemini account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"trend\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"improving\",\n        \"stable\",\n        \"declining\",\n        \"insufficient_data\"\n      ],\n      \"description\": \"Copied verbatim from the given trend. Never recomputed.\"\n    },\n    \"findings\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"minItems\": 0,\n      \"maxItems\": 3,\n      \"description\": \"Faults that are new or worsening, labelled exactly as the tools return them.\"\n    },\n    \"summary_for_physio\": {\n      \"type\": \"string\",\n      \"description\": \"2-3 sentence progress summary.\"\n    }\n  },\n  \"required\": [\n    \"trend\",\n    \"findings\",\n    \"summary_for_physio\"\n  ],\n  \"additionalProperties\": false\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        300
+      ],
+      "id": "parser00-0000-0000-0000-0000000000000000",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "name": "get_case_file",
+        "description": "Returns the case file: metrics, rule flags, prescription.",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "A2 Tool - get_case_file"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        900,
+        280
+      ],
+      "id": "tcase000-0000-0000-0000-0000000000000000",
+      "name": "get_case_file"
+    },
+    {
+      "parameters": {
+        "name": "get_fault_history",
+        "description": "Returns how often a fault appeared in past sessions, and whether it is new this session. Input fault_code.",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "A2 Tool - get_fault_history"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}",
+            "fault_code": "={{ $fromAI('fault_code','the fault label to look up in history','string') }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            },
+            {
+              "id": "fault_code",
+              "displayName": "fault_code",
+              "required": false,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        1080,
+        280
+      ],
+      "id": "tfault00-0000-0000-0000-0000000000000000",
+      "name": "get_fault_history"
+    }
+  ],
+  "connections": {
+    "When Called by Supervisor": {
+      "main": [
+        [
+          {
+            "node": "Set Trend (code decides)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Manually": {
+      "main": [
+        [
+          {
+            "node": "Load Scenario (test)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Scenario (test)": {
+      "main": [
+        [
+          {
+            "node": "Set Trend (code decides)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Trend (code decides)": {
+      "main": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_case_file": {
+      "ai_tool": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_fault_history": {
+      "ai_tool": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
