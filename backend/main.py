@@ -108,17 +108,19 @@ oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="auth/login"
 )
 
+_PHYSIO_DEMO_PASSWORD = os.getenv("PHYSIO_DEMO_PASSWORD", "")
+
 PHYSIO_ACCOUNTS = {
     "DR001": {
         "id": "DR001",
         "name": "Dr. Priya Nair",
-        "password": "physio2026",
+        "password":  _PHYSIO_DEMO_PASSWORD,
         "specialty": "Orthopaedic Rehabilitation",
     },
     "DR002": {
         "id": "DR002",
         "name": "Dr. Kasun Perera",
-        "password": "physio2026",
+        "password":  _PHYSIO_DEMO_PASSWORD,
         "specialty": "Neurological Rehabilitation",
     },
 }
