@@ -38,3 +38,5 @@ backend/physio.db
 *.rej
 
 *.db
+
+live_frame_log.csv
