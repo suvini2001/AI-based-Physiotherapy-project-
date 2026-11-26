@@ -1,0 +1,268 @@
+{
+  "name": "A3 - Assessment Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -40,
+        -40
+      ],
+      "id": "trigexec-0000-0000-0000-0000000000000000",
+      "name": "When Called by Supervisor"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        180
+      ],
+      "id": "trigman0-0000-0000-0000-0000000000000000",
+      "name": "Test Manually"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Paste a fixture's { ev, metrics, rule_flags } object below to test that scenario.\n// Leave as null to use each A2 tool's built-in dev fixture (the declining_safety case).\nconst case_file = null;\nreturn [{ json: { case_file } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        180,
+        180
+      ],
+      "id": "loadcase-0000-0000-0000-0000000000000000",
+      "name": "Load Test Case File"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "A patient has just finished an exercise session. Assess the movement quality for the physiotherapist.\nFirst call get_case_file to read the metrics and rule flags. If one repetition needs a closer look, call get_rep_details with its rep_number. Base every value on the tool results, copy fault labels exactly, then produce the structured output.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Assessment agent in a physiotherapy team. You review ONE finished exercise session for a physiotherapist.\n\nRules:\n- Always call get_case_file FIRST to read the metrics and rule flags.\n- Call get_rep_details ONLY if you need one repetition's numbers.\n- Use ONLY values returned by your tools. Never calculate or estimate new numbers yourself.\n- Copy fault labels EXACTLY as the tools return them. They may be short codes (e.g. SHOULDER_HIKE) or full sentences (e.g. \"Keep your shoulder down\", \"Moving too fast — slow down and control the movement\"). Do not rename, shorten, translate or invent fault labels.\n- Do not diagnose, give medical advice, or suggest changing the prescription.\n\nReturn exactly:\n- quality_band: copy it verbatim from the case file (good, fair, or poor).\n- key_findings: 1 to 3 short strings. Each names a fault using the label from the tools and how many reps it affected (e.g. \"Keep your shoulder down on 3 reps\").\n- summary_for_physio: 2 to 3 plain sentences a physiotherapist can read at a glance.",
+          "maxIterations": 4
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        460,
+        60
+      ],
+      "id": "agent000-0000-0000-0000-0000000000000000",
+      "name": "Assessment Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        360,
+        320
+      ],
+      "id": "gemini00-0000-0000-0000-0000000000000000",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gemini account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"quality_band\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"good\",\n        \"fair\",\n        \"poor\"\n      ],\n      \"description\": \"Copied verbatim from the case file metrics.\"\n    },\n    \"key_findings\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"minItems\": 1,\n      \"maxItems\": 3,\n      \"description\": \"1-3 findings, each quoting a fault label exactly as the tools returned it.\"\n    },\n    \"summary_for_physio\": {\n      \"type\": \"string\",\n      \"description\": \"2-3 sentence summary for the physiotherapist.\"\n    }\n  },\n  \"required\": [\n    \"quality_band\",\n    \"key_findings\",\n    \"summary_for_physio\"\n  ],\n  \"additionalProperties\": false\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        620,
+        320
+      ],
+      "id": "parser00-0000-0000-0000-0000000000000000",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "name": "get_case_file",
+        "description": "Returns the case file for this session: metrics, rule flags, and the prescription. Call this FIRST.",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "A2 Tool - get_case_file"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        800,
+        300
+      ],
+      "id": "toolcase-0000-0000-0000-0000000000000000",
+      "name": "get_case_file"
+    },
+    {
+      "parameters": {
+        "name": "get_rep_details",
+        "description": "Returns one repetition's angles, duration, quality and fault labels. Input rep_number.",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "A2 Tool - get_rep_details"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}",
+            "rep_number": "={{ $fromAI('rep_number','the repetition number to inspect','number') }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            },
+            {
+              "id": "rep_number",
+              "displayName": "rep_number",
+              "required": false,
+              "type": "number",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        980,
+        300
+      ],
+      "id": "toolrep0-0000-0000-0000-0000000000000000",
+      "name": "get_rep_details"
+    }
+  ],
+  "connections": {
+    "When Called by Supervisor": {
+      "main": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Manually": {
+      "main": [
+        [
+          {
+            "node": "Load Test Case File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Test Case File": {
+      "main": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_case_file": {
+      "ai_tool": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_rep_details": {
+      "ai_tool": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
