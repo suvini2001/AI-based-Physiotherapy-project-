@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 
-const BASE = 'http://127.0.0.1:8000'
+import { BASE } from '../api'
 
 export default function PatientLogin() {
   const navigate = useNavigate()
@@ -18,13 +18,7 @@ export default function PatientLogin() {
   const [loading, setLoading] = useState(false)
 
   function saveSession(data) {
-    // Development-only storage.
-    // We will replace this with secure server-managed
-    // sessions before real patient deployment.
-    localStorage.setItem(
-      'patient',
-      JSON.stringify(data.patient)
-    )
+    localStorage.removeItem('patient')
 
     sessionStorage.setItem(
       'patient_token',
@@ -50,7 +44,7 @@ export default function PatientLogin() {
       navigate('/patient/session')
     } catch (err) {
       setError(
-        err.response?.data?.detail ||
+        (typeof err.response?.data?.detail === 'string' ? err.response.data.detail : null) ||
         'Login failed. Please try again.'
       )
     } finally {
@@ -94,7 +88,7 @@ export default function PatientLogin() {
       setConfirmPassword('')
     } catch (err) {
       setError(
-        err.response?.data?.detail ||
+        (typeof err.response?.data?.detail === 'string' ? err.response.data.detail : null) ||
         'Registration failed.'
       )
     } finally {

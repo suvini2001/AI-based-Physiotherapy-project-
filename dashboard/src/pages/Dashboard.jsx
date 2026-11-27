@@ -69,9 +69,9 @@ export default function Dashboard() {
         ) : patients.length === 0 ? (
           <div className="px-6 py-12 text-center">
             <p className="text-slate-500 text-sm mb-4">No patients yet.</p>
-            <button onClick={() => api.seed().then(() => window.location.reload())}
+            <button onClick={() => navigate('/patient')}
               className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg transition-colors">
-              Load demo patients
+              Register a fictional patient
             </button>
           </div>
         ) : (

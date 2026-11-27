@@ -1,3 +1,6 @@
+import { useNavigate, Link } from 'react-router-dom'
+import { usePatient } from '../context/PatientContext'
+import { clearPatientSession } from '../api'
 
 import { useEffect, useRef, useState } from 'react'
 import { createMockAIService } from '../services/mockAIService'
@@ -18,14 +21,8 @@ export default function ExerciseSession() {
   // 2. PATIENT PRESCRIPTION
   // ===================================================
 
-  const [patient] = useState(() => {
-    try {
-      const stored = localStorage.getItem('patient')
-      return stored ? JSON.parse(stored) : null
-    } catch {
-      return null
-    }
-  })
+  const patient = usePatient()
+  const navigate = useNavigate()
 
   const prescribedTarget = Number(patient?.target_reps)
 
@@ -36,7 +33,7 @@ export default function ExerciseSession() {
       : 10
 
   const exerciseName =
-    patient?.exercise === 'shoulder_abduction'
+    !patient?.has_prescription ? 'Awaiting clinician prescription' : patient?.exercise === 'shoulder_abduction'
       ? 'Shoulder Abduction'
       : 'Elbow Flexion'
 
@@ -164,7 +161,7 @@ export default function ExerciseSession() {
 
   function startSimulation() {
     // Prevent multiple simulations running together.
-    if (mockServiceRef.current) return
+    if (mockServiceRef.current || !patient?.has_prescription) return
 
     // Reset UI values for a new session.
     setIsCompleted(false)
@@ -267,6 +264,11 @@ export default function ExerciseSession() {
 
       <div className="mx-auto max-w-4xl space-y-6">
 
+        <nav className="flex justify-between">
+          <Link to="/patient/session" onClick={() => { stopCamera(); stopSimulation() }}>← Patient dashboard</Link>
+          <button onClick={() => { stopCamera(); stopSimulation(); clearPatientSession(); navigate('/patient', { replace: true }) }}>Sign Out</button>
+        </nav>
+        {!patient?.has_prescription && <p role="status">No prescription yet. Ask your clinician to prescribe an exercise before starting.</p>}
         {/* HEADER */}
         <header>
           <p className="text-sm text-blue-400">
@@ -516,7 +518,7 @@ export default function ExerciseSession() {
 
             <button
               onClick={startSimulation}
-              disabled={isSimulating || isCompleted}
+              disabled={isSimulating || isCompleted || !patient?.has_prescription}
               className="rounded-lg bg-emerald-600 px-6 py-3 font-medium disabled:opacity-50"
             >
               Start Simulation

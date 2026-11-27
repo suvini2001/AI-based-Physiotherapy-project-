@@ -1,3 +1,5 @@
+import RealExerciseSession from './pages/RealExerciseSession'
+import { PatientRoute } from './context/PatientContext'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import Login from './pages/Login'
@@ -17,18 +19,14 @@ function PrivateRoute({ children }) {
   return token ? children : <Navigate to="/login" replace />
 }
 
-function PatientRoute({ children }) {
-  const stored = localStorage.getItem('patient')
-  return stored ? children : <Navigate to="/patient" replace />
-}
-
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          <Route path="/patient/exercise-real" element={<PatientRoute><RealExerciseSession /></PatientRoute>} />
           {/*Exercise session*/}
-          <Route path="/exercise-demo"element={<ExerciseSession />}/>
+          <Route path="/exercise-demo" element={<Navigate to="/patient/exercise-demo" replace />} />
           <Route path="/patient/exercise-demo"element={
             <PatientRoute>
               <ExerciseSession />

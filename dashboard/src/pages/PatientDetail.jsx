@@ -48,6 +48,7 @@ export default function PatientDetail() {
   const [selectedSession, setSelectedSession] = useState(null)
   const [reps, setReps] = useState([])
   const [presc, setPresc] = useState({ exercise: 'elbow_flexion', target_reps: 10, target_rom: 100 })
+  const [prescError, setPrescError] = useState('')
   const [prescSaved, setPrescSaved] = useState(false)
   const [tab, setTab] = useState('progress')
 
@@ -70,9 +71,14 @@ export default function PatientDetail() {
   }
 
   async function savePresc() {
-    await api.setPrescription({ patient_id: Number(id), ...presc })
-    setPrescSaved(true)
-    setTimeout(() => setPrescSaved(false), 2000)
+    setPrescError('')
+    try {
+      await api.setPrescription({ patient_id: Number(id), ...presc })
+      setPrescSaved(true)
+      setTimeout(() => setPrescSaved(false), 2000)
+    } catch (error) {
+      setPrescError(typeof error.response?.data?.detail === 'string' ? error.response.data.detail : 'Could not save. Use 1–50 repetitions and a ROM between 0 and 180 degrees.')
+    }
   }
 
   const chartData = [...sessions].reverse().map((s, i) => ({
@@ -165,6 +171,7 @@ export default function PatientDetail() {
               <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-800">
                   <h2 className="text-sm font-medium text-white">Session history</h2>
+                  <p className="mt-2 text-xs text-amber-300">Research measurements are not clinically validated. Older records have unverified provenance.</p>
                 </div>
                 <table className="w-full">
                   <thead>
@@ -181,7 +188,7 @@ export default function PatientDetail() {
                         <td className="px-6 py-3 text-sm text-slate-300">
                           {new Date(s.date).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}
                         </td>
-                        <td className="px-6 py-3 text-sm text-slate-400 capitalize">{s.exercise?.replace('_',' ')}</td>
+                        <td className="px-6 py-3 text-sm text-slate-400 capitalize">{s.exercise?.replaceAll('_',' ')}<span className="block text-xs text-slate-500">{s.side || ''} · {s.measurement_source === 'research_pipeline' ? 'Research AI' : 'Legacy / unverified'}</span></td>
                         <td className="px-6 py-3 text-sm text-slate-300">{s.total_reps}</td>
                         <td className="px-6 py-3 text-sm text-slate-300">{s.mean_rom?.toFixed(1)}°</td>
                         <td className="px-6 py-3">
@@ -287,6 +294,7 @@ export default function PatientDetail() {
         </div>
       )}
 
+      {prescError && <p role="alert" className="text-red-400">{prescError}</p>}
       {tab === 'prescription' && (
         <div className="max-w-md">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
