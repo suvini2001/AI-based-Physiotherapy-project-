@@ -56,7 +56,7 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "A patient finished a session. Case file:\n{{ JSON.stringify($json.case_file) }}\n\nAssess the movement quality and produce the structured output.",
+        "text": "=A patient finished a session. Case file:\n{{ JSON.stringify($json.case_file) }}\n\nAssess the movement quality and produce the structured output.",
         "hasOutputParser": true,
         "options": {
           "systemMessage": "You are the Assessment agent in a physiotherapy team. You review ONE finished session.\nYou are GIVEN the case file (metrics, rule flags, prescription). Use ONLY the numbers in it; never calculate new ones.\nCopy quality_band verbatim from the case file. Copy fault labels exactly as they appear (code or sentence). Do not diagnose or change the prescription.\nReturn: quality_band, 1-3 key_findings naming faults, a 2-3 sentence summary_for_physio.",
@@ -123,7 +123,7 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "A patient finished a session. Case file:\n{{ JSON.stringify($json.case_file) }}\n\nThe system has already decided the trend as: {{ $json.trend }}  (copy this verbatim).\nAssessment reported these findings: {{ JSON.stringify(($json.assessment||{}).key_findings || []) }}.\nExplain the progress and produce the structured output.",
+        "text": "=A patient finished a session. Case file:\n{{ JSON.stringify($json.case_file) }}\n\nThe system has already decided the trend as: {{ $json.trend }}  (copy this verbatim).\nAssessment reported these findings: {{ JSON.stringify(($json.assessment||{}).key_findings || []) }}.\nExplain the progress and produce the structured output.",
         "hasOutputParser": true,
         "options": {
           "systemMessage": "You are the Progress agent. You explain how a patient is progressing.\nThe trend has ALREADY been decided and is given to you. Copy it verbatim; NEVER change it or recompute it.\nIf trend is insufficient_data: return it, an empty findings list, and one sentence that this is an early session with no history.\nOtherwise: from the case file's fault_counts and history, name the faults that are new or worsening. Use labels exactly as given.\nUse only the given values. Do not diagnose or change the prescription.\nReturn: trend (verbatim), 0-3 findings, a 2-3 sentence summary_for_physio.",
