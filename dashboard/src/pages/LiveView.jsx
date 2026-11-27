@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { api } from '../api'
 
 const MAX_POINTS = 150
-const WS_URL = 'ws://localhost:8000/ws/live'
 
 const STATE_COLORS = {
   EXTENDED: '#64748b', FLEXING: '#3b82f6',
@@ -27,35 +26,44 @@ export default function LiveView() {
   const [patients, setPatients] = useState([])
   const [data, setData] = useState([])
   const [latest, setLatest] = useState(null)
-  const wsRef = useRef(null)
+  const pollRef = useRef(null)
+  const epoch = useRef(0)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     api.getPatients().then(r => setPatients(r.data)).catch(() => {})
-    return () => wsRef.current?.close()
+    return () => { epoch.current += 1; clearTimeout(pollRef.current) }
   }, [])
 
   function connect() {
-    if (wsRef.current) wsRef.current.close()
-    const ws = new WebSocket(`${WS_URL}/${patientId}`)
-    wsRef.current = ws
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
-    ws.onerror = () => setConnected(false)
-    ws.onmessage = (e) => {
-      const frame = JSON.parse(e.data)
-      setLatest(frame)
-      setData(prev => {
-        const next = [...prev, { t: frame.timestamp?.toFixed(1), angle: frame.joint_angle }]
-        return next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next
-      })
+    clearTimeout(pollRef.current)
+    const run = ++epoch.current
+    setData([]); setLatest(null); setError(''); setConnected(true)
+    async function poll() {
+      try {
+        const { data: response } = await api.getLive(patientId)
+        if (run !== epoch.current) return
+        const frame = response.measurement
+        setLatest(frame)
+        if (frame) setData(prev => {
+          const point = { t: frame.timestamp?.toFixed(1), angle: frame.joint_angle }
+          if (prev.at(-1)?.t === point.t) return prev
+          return [...prev, point].slice(-MAX_POINTS)
+        })
+        pollRef.current = setTimeout(poll, 1000)
+      } catch {
+        if (run !== epoch.current) return
+        setError('Could not load this patient’s live session. Check your login and retry.')
+        setConnected(false); setLatest(null)
+      }
     }
+    poll()
   }
 
   function disconnect() {
-    wsRef.current?.close()
-    setConnected(false)
-    setData([])
-    setLatest(null)
+    epoch.current += 1
+    clearTimeout(pollRef.current)
+    setConnected(false); setData([]); setLatest(null)
   }
 
   const stateColor = STATE_COLORS[latest?.state] || '#64748b'
@@ -64,7 +72,7 @@ export default function LiveView() {
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-2xl font-semibold text-white mb-1">Live session</h1>
-        <p className="text-slate-400 text-sm">Live AI integration is unavailable pending adapter verification. Browser simulations are not streamed here.</p>
+        <p className="text-slate-400 text-sm">Authenticated research measurements for the selected patient. No video is streamed; simulations are excluded.</p>
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6 flex items-end gap-4 flex-wrap">
@@ -78,10 +86,10 @@ export default function LiveView() {
         </div>
         <div className="flex gap-3">
           {!connected ? (
-            <button disabled onClick={connect}
+            <button disabled={!patients.length} onClick={connect}
               className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-300 animate-pulse"/>
-              Unavailable
+              Connect
             </button>
           ) : (
             <button onClick={disconnect}
@@ -99,13 +107,14 @@ export default function LiveView() {
         </div>
       </div>
 
+      {error && <p role="alert" className="mb-4 text-red-400">{error}</p>}
       <div className="flex gap-4 mb-6 flex-wrap">
         <StatPill label="Joint angle" value={latest?.joint_angle != null ? `${latest.joint_angle.toFixed(0)}°` : '—'} color="text-blue-400" />
         <StatPill label="State" value={latest?.state || '—'} />
         <StatPill label="Reps" value={latest?.rep_count ?? '—'} color="text-emerald-400" />
         <div className="bg-slate-800 border border-slate-700 rounded-xl px-5 py-4 text-center min-w-28">
           <p className="text-sm font-semibold mb-1 mt-1" style={{ color: stateColor }}>
-            {latest?.fault || 'None'}
+            {latest?.feedback || 'None'}
           </p>
           <p className="text-slate-500 text-xs">Last fault</p>
         </div>
@@ -117,7 +126,7 @@ export default function LiveView() {
           {connected && (
             <span className="flex items-center gap-1.5 text-xs text-emerald-400">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/>
-              Streaming ~10 Hz
+              Refreshing every second
             </span>
           )}
         </div>
@@ -127,7 +136,7 @@ export default function LiveView() {
             {connected
               ? <><span className="text-2xl animate-spin">⟳</span><span>Waiting for frames…</span></>
               : <><p>Connect to a live session to see the angle chart.</p>
-                  <p className="text-slate-700 text-xs">Use the patient browser simulation for this prototype.</p></>
+                  <p className="text-slate-700 text-xs">The patient must start a real camera analysis session.</p></>
             }
           </div>
         ) : (
@@ -141,10 +150,6 @@ export default function LiveView() {
                 <Tooltip formatter={(v) => [`${v?.toFixed(1)}°`, 'Angle']}
                   contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: '#64748b' }} itemStyle={{ color: '#38bdf8' }} />
-                <ReferenceLine y={145} stroke="#3b82f6" strokeDasharray="4 4" strokeOpacity={0.5}
-                  label={{ value: 'Extended', position: 'insideTopRight', fontSize: 10, fill: '#3b82f6' }} />
-                <ReferenceLine y={55} stroke="#8b5cf6" strokeDasharray="4 4" strokeOpacity={0.5}
-                  label={{ value: 'Flexed', position: 'insideTopRight', fontSize: 10, fill: '#8b5cf6' }} />
                 <Line type="monotone" dataKey="angle" stroke="#38bdf8" strokeWidth={2}
                   dot={false} isAnimationActive={false} />
               </LineChart>

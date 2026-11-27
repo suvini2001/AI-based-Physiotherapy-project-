@@ -8,10 +8,12 @@ export default function PatientSession() {
   const navigate = useNavigate()
 
   const patient = usePatient()
+  const [ai, setAI] = useState(null)
   const [lastSession, setLastSession] = useState(null)
   const [error, setError] = useState('')
   useEffect(() => {
     let active = true
+    patientApi.aiStatus().then(({ data }) => { if (active) setAI(data) }).catch(() => { if (active) setAI({ available: false, reason: 'Could not check AI availability.' }) })
     patientApi.lastSession().then(({ data }) => {
       if (active) setLastSession(data)
     }).catch(() => { if (active) setError('Could not load session history.') })
@@ -135,7 +137,7 @@ export default function PatientSession() {
             <div className="mb-6 rounded-2xl border border-slate-800 bg-slate-900 p-5">
 
               <p className="mb-2 text-xs text-slate-500">
-                Last Session
+                Last Session — {lastSession.measurement_source === 'research_pipeline' ? 'Research AI' : 'Legacy / unverified'}
               </p>
 
               <p className="font-medium text-white">
@@ -258,7 +260,12 @@ export default function PatientSession() {
             Browser camera + simulated AI results
           </p>
 
-          <p className="mt-6 text-sm text-slate-400">Real AI and desktop sessions are unavailable pending adapter verification.</p>
+          <section className="mt-6 rounded-xl border border-blue-800 p-5">
+            <h2 className="font-semibold">Real camera analysis</h2>
+            <p className="my-3 text-sm text-slate-300">{ai?.reason || 'Checking the AI runtime…'}</p>
+            <button disabled={!patient.has_prescription || !ai?.available} onClick={() => navigate('/patient/exercise-real')}
+              className="rounded-lg bg-blue-600 px-5 py-3 disabled:opacity-50">Open Real AI Session</button>
+          </section>
         </main>
       </div>
     )

@@ -1,0 +1,14 @@
+# Separate Python 3.11 environment. Research requirements remain untouched.
+numpy==1.26.4
+mediapipe==0.10.14
+opencv-contrib-python==4.11.0.86
+scipy==1.17.1
+lightgbm>=4,<5
+Pillow==13.0.0
+PyYAML>=6,<7
+fastdtw==0.3.4
+requests>=2.31,<3
+pytest>=8,<10
+pandas==3.0.6
+
+scikit-learn>=1.4,<2

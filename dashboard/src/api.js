@@ -17,6 +17,8 @@ export const api = {
     })
   },
 
+  getLive: (patientId) => axios.get(`${BASE}/api/patients/${patientId}/ai-live`, { headers: authHeaders() }),
+
   getPatients: () =>
     axios.get(`${BASE}/api/patients`, { headers: authHeaders() }),
 
@@ -53,6 +55,7 @@ patientClient.interceptors.response.use(response => response, error => {
   return Promise.reject(error)
 })
 export const patientApi = {
+  aiStatus: () => patientClient.get('/patient/me/ai-status', { timeout: 120000 }),
   me: () => patientClient.get('/patient/me'),
   lastSession: () => patientClient.get('/patient/me/last-session'),
 }

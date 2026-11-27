@@ -1,5 +1,7 @@
 # PhysioTrack local web prototype
 
+**Update:** Real browser inference is now available through a separate, opt-in AI runtime. Follow [AI_INTEGRATION.md](AI_INTEGRATION.md) for setup, current architecture, tests and limitations. The simulation flow below is still available. Historical AI-blocker notes below describe the earlier simulation-only milestone.
+
 Use branch `dev/prabash-physiotrack-web`. Fictional data only. This is a development prototype, not medically validated or production-ready. No research pipeline files are changed.
 
 ## Local setup (macOS)

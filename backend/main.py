@@ -1,5 +1,8 @@
 
 import os
+import json
+from contextlib import asynccontextmanager
+from ai_adapter import adapter
 import secrets
 
 from datetime import datetime, timedelta, timezone
@@ -68,7 +71,14 @@ PATIENT_TOKEN_EXPIRE_MINUTES = 60
 
 password_hasher = PasswordHasher()
 
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    adapter.shutdown()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="PhysioTrack API",
     version="1.1-dev",
 )
@@ -503,6 +513,17 @@ def patient_me(
 # PROTECTED PATIENT SESSION HISTORY
 # ============================================================
 
+def measurement_provenance(session):
+    try:
+        raw = json.loads(session.raw_json or '{}')
+        source = raw.get('source', {})
+        if isinstance(source, dict) and source.get('pipeline') == 'research_pipeline':
+            return {'measurement_source': 'research_pipeline', 'side': raw.get('side'), 'clinically_validated': False}
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return {'measurement_source': 'legacy_unverified', 'side': None, 'clinically_validated': False}
+
+
 @app.get("/patient/me/last-session")
 def patient_my_last_session(
     patient: Patient = Depends(get_current_patient),
@@ -525,6 +546,7 @@ def patient_my_last_session(
         "total_reps": last.total_reps,
         "mean_rom": last.mean_rom,
         "date": last.date,
+        **measurement_provenance(last),
     }
 
 
@@ -619,6 +641,7 @@ def get_sessions(
             "mean_rom": s.mean_rom,
             "mean_quality": s.mean_quality,
             "date": s.date,
+            **measurement_provenance(s),
         }
         for s in sessions
     ]
@@ -663,7 +686,7 @@ def get_reps(
 @app.post("/api/sessions")
 def upload_session(_=Depends(get_current_patient)):
     # Only a trusted, tested inference adapter may write measurements.
-    raise HTTPException(503, "Clinical uploads disabled until the AI adapter is verified; simulation results are never saved")
+    raise HTTPException(503, "Direct measurement uploads are disabled. Only server AI sessions can save research results.")
 
 
 # ============================================================
@@ -740,5 +763,8 @@ def session_status(patient_id: int, patient: Patient = Depends(get_current_patie
 
 @app.get("/patient/me/ai-status")
 def ai_status(_=Depends(get_current_patient)):
-    from ai_adapter import adapter
     return adapter.status()
+
+
+from ai_routes import install_ai_routes
+install_ai_routes(app, get_current_patient, get_current_physio, get_db, latest_prescription)

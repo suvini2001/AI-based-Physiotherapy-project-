@@ -1,3 +1,4 @@
+import RealExerciseSession from './pages/RealExerciseSession'
 import { PatientRoute } from './context/PatientContext'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
@@ -23,6 +24,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          <Route path="/patient/exercise-real" element={<PatientRoute><RealExerciseSession /></PatientRoute>} />
           {/*Exercise session*/}
           <Route path="/exercise-demo" element={<Navigate to="/patient/exercise-demo" replace />} />
           <Route path="/patient/exercise-demo"element={

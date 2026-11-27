@@ -41,3 +41,12 @@ mlflow.db
 mlruns/
 mlartifacts/
 .venv-mlflow/
+
+# Isolated browser inference runtime
+.venv-ai/
+
+# Private fictional-data demo
+.local-ai-demo/
+
+# Private AI library cache (reused between workers)
+.local-ai-cache/

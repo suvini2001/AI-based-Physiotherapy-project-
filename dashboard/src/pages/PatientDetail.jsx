@@ -171,6 +171,7 @@ export default function PatientDetail() {
               <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-800">
                   <h2 className="text-sm font-medium text-white">Session history</h2>
+                  <p className="mt-2 text-xs text-amber-300">Research measurements are not clinically validated. Older records have unverified provenance.</p>
                 </div>
                 <table className="w-full">
                   <thead>
@@ -187,7 +188,7 @@ export default function PatientDetail() {
                         <td className="px-6 py-3 text-sm text-slate-300">
                           {new Date(s.date).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}
                         </td>
-                        <td className="px-6 py-3 text-sm text-slate-400 capitalize">{s.exercise?.replace('_',' ')}</td>
+                        <td className="px-6 py-3 text-sm text-slate-400 capitalize">{s.exercise?.replaceAll('_',' ')}<span className="block text-xs text-slate-500">{s.side || ''} · {s.measurement_source === 'research_pipeline' ? 'Research AI' : 'Legacy / unverified'}</span></td>
                         <td className="px-6 py-3 text-sm text-slate-300">{s.total_reps}</td>
                         <td className="px-6 py-3 text-sm text-slate-300">{s.mean_rom?.toFixed(1)}°</td>
                         <td className="px-6 py-3">
