@@ -34,7 +34,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// B7 - Final Check + Fallback\n// Validates the assembled result before sending to FastAPI\n\nconst BANNED_PHRASES = [\n  \"you have\", \"diagnos\", \"medication\",\n  \"stop the exercise\", \"injury\", \"damaged\"\n];\n\nconst input = $input.first().json;\nconst coachingOutput = input.coaching_output || \"\";\nconst ruleFlags = input.rule_flags || [];\nconst metrics = input.metrics || {};\nconst sessionId = input.session_id || 0;\nconst assessmentSummary = input.assessment_summary || \"\";\nconst progressSummary = input.progress_summary || \"\";\nconst qualityBand = input.quality_band || \"unknown\";\nconst trend = input.trend || \"unknown\";\n\nconst errors = [];\n\n// Check 1 — coaching output exists\nif (!coachingOutput || coachingOutput.trim() === \"\") {\n  errors.push(\"coaching_output is empty\");\n}\n\n// Check 2 — banned phrases in coaching message\nfor (const phrase of BANNED_PHRASES) {\n  if (coachingOutput.toLowerCase().includes(phrase.toLowerCase())) {\n    errors.push(\"banned phrase found: \" + phrase);\n  }\n}\n\n// Check 3 — banned phrases in physio summaries\nfor (const phrase of BANNED_PHRASES) {\n  if (assessmentSummary.toLowerCase().includes(phrase.toLowerCase())) {\n    errors.push(\"banned phrase in assessment_summary: \" + phrase);\n  }\n  if (progressSummary.toLowerCase().includes(phrase.toLowerCase())) {\n    errors.push(\"banned phrase in progress_summary: \" + phrase);\n  }\n}\n\n// Check 4 — no specific numbers in coaching message\nconst numberPattern = /\\b\\d+(\\.\\d+)?\\s*(degrees?|°|%|reps?|repetitions?)\\b/i;\nif (numberPattern.test(coachingOutput)) {\n  errors.push(\"coaching message contains specific numbers\");\n}\n\n// Build result\nconst hasHighFlag = ruleFlags.some(f => f.severity === \"high\");\nconst needsFallback = errors.length > 0;\n\nconst result = {\n  contract_version: \"1.0\",\n  session_id: sessionId,\n  metrics: metrics,\n  assessment: {\n    quality_band: qualityBand,\n    summary_for_physio: assessmentSummary\n  },\n  progress: {\n    trend: trend,\n    summary_for_physio: progressSummary\n  },\n  review: {\n    needs_physio_attention: hasHighFlag || needsFallback,\n    flags: ruleFlags\n  },\n  coaching: {\n    patient_message: needsFallback ? \"\" : coachingOutput,\n    status: needsFallback ? \"fallback\" : \"pending_review\"\n  },\n  llm_status: needsFallback ? \"fallback\" : \"ok\",\n  validation_errors: errors\n};\n\nreturn [{ json: result }];"
+        "jsCode": "// B7 - Final Check + Fallback\n// Validates the assembled result and formats it to match agent_insights.v1 contract\n\nconst BANNED_PHRASES = [\n  \"you have\", \"diagnos\", \"medication\",\n  \"stop the exercise\", \"damaged\"\n];\n\nconst input = $input.first().json;\nconst coachingOutput = input.coaching_output || \"\";\nconst ruleFlags = input.rule_flags || [];\nconst metrics = input.metrics || {};\nconst sessionId = input.session_id || 0;\nconst requestId = input.request_id || crypto.randomUUID();\nconst assessmentSummary = input.assessment_summary || \"\";\nconst progressSummary = input.progress_summary || \"\";\nconst qualityBand = input.quality_band || \"unknown\";\nconst trend = input.trend || \"unknown\";\nconst agentTrace = input.agent_trace || [];\nconst startTime = input.start_time || Date.now();\n\nconst errors = [];\n\n// Check 1 — coaching output exists\nif (!coachingOutput || coachingOutput.trim() === \"\") {\n  errors.push(\"coaching_output is empty\");\n}\n\n// Check 2 — banned phrases in coaching message\nfor (const phrase of BANNED_PHRASES) {\n  if (coachingOutput.toLowerCase().includes(phrase.toLowerCase())) {\n    errors.push(\"banned phrase found: \" + phrase);\n  }\n}\n\n// Check 3 — banned phrases in physio summaries\nfor (const phrase of BANNED_PHRASES) {\n  if (assessmentSummary.toLowerCase().includes(phrase.toLowerCase())) {\n    errors.push(\"banned phrase in assessment_summary: \" + phrase);\n  }\n  if (progressSummary.toLowerCase().includes(phrase.toLowerCase())) {\n    errors.push(\"banned phrase in progress_summary: \" + phrase);\n  }\n}\n\n// Check 4 — no specific numbers in coaching message\nconst numberPattern = /\\b\\d+(\\.\\d+)?\\s*(degrees?|°|%|reps?|repetitions?)\\b/i;\nif (numberPattern.test(coachingOutput)) {\n  errors.push(\"coaching message contains specific numbers\");\n}\n\n// Check 5 — high flag must have physio warning\nconst hasHighFlag = ruleFlags.some(f => f.severity === \"high\");\nif (hasHighFlag && !coachingOutput.toLowerCase().includes(\"physiotherapist\")) {\n  errors.push(\"high flag present but no physiotherapist warning in coaching message\");\n}\n\nconst needsFallback = errors.length > 0;\nconst latencyMs = Date.now() - startTime;\n\n// Build result matching agent_insights.v1 contract\nconst result = {\n  contract_version: \"1.0\",\n  request_id: requestId,\n  session_id: sessionId,\n  metrics: metrics,\n  assessment: {\n    quality_band: qualityBand,\n    summary_for_physio: assessmentSummary\n  },\n  progress: {\n    trend: trend,\n    summary_for_physio: progressSummary\n  },\n  review: {\n    needs_physio_attention: hasHighFlag || needsFallback,\n    flags: ruleFlags\n  },\n  coaching: {\n    patient_message: needsFallback ? \"\" : coachingOutput,\n    status: needsFallback ? \"fallback\" : \"pending_review\"\n  },\n  meta: {\n    llm_status: needsFallback ? \"fallback\" : \"ok\",\n    latency_ms: latencyMs,\n    validation_errors: errors\n  },\n  agent_trace: agentTrace\n};\n\nreturn [{ json: result }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -51,9 +51,10 @@
       {
         "json": {
           "session_id": 42,
+          "request_id": "7f9c2b1e-4a1d-4c55-9e2b-0c1d2e3f4a5b",
           "coaching_output": "You've been working hard today. Try to keep your shoulder relaxed. Please check in with your physiotherapist.",
           "assessment_summary": "Patient completed 8 reps with fair quality. SHOULDER_HIKE detected on 3 reps.",
-          "progress_summary": "ROM is declining over recent sessions. SHOULDER_HIKE is a new fault.",
+          "progress_summary": "ROM is declining over recent sessions.",
           "quality_band": "fair",
           "trend": "declining",
           "rule_flags": [
@@ -67,7 +68,8 @@
           "metrics": {
             "reps_vs_target_pct": 80,
             "rom_vs_target_pct": 71
-          }
+          },
+          "agent_trace": []
         }
       }
     ]
@@ -90,7 +92,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "1433c2e9-4ff6-4d78-bd69-f879185bb895",
+  "versionId": "39a2d77c-c042-4d9a-ae77-3b439bdc5dfe",
   "meta": {
     "instanceId": "bdfac9e3aad7d598fce1354fb684dd45bfe67ba5891431c588f5b75e3f9c33b7"
   },

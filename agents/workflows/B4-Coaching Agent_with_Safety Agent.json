@@ -130,7 +130,7 @@
           "mappingMode": "defineBelow",
           "value": {
             "draft_message": "={{ $fromAI('draft_message', 'The draft coaching message to review') }}",
-            "rule_flag": "={{ $fromAI('rule_flags', 'The rule flags from the session as a JSON string', 'string') }}"
+            "rule_flag": "={{ JSON.stringify($('When Executed by Another Workflow').item.json.rule_flags) }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -252,7 +252,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "29476b07-7832-498a-9568-01d0efe3ea63",
+  "versionId": "fb25b470-b13d-4fcd-9861-f2367dca63d1",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "bdfac9e3aad7d598fce1354fb684dd45bfe67ba5891431c588f5b75e3f9c33b7"

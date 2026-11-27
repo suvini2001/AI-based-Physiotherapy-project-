@@ -11,6 +11,14 @@
             {
               "name": "metrics",
               "type": "object"
+            },
+            {
+              "name": "ev",
+              "type": "object"
+            },
+            {
+              "name": "history",
+              "type": "array"
             }
           ]
         }
@@ -49,7 +57,6 @@
               "SHOULDER_HIKE": 3
             },
             "fast_rep_share": 0.1,
-            "rom_slope_deg_per_session": -3.46,
             "baseline_rom": 105,
             "quality_band": "fair",
             "incomplete_attempts": 0,
@@ -93,7 +100,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "1723689b-a15d-4b37-91fc-4776ffdac235",
+  "versionId": "9708c4d5-fd57-4096-98cb-79df5184a24e",
   "meta": {
     "instanceId": "bdfac9e3aad7d598fce1354fb684dd45bfe67ba5891431c588f5b75e3f9c33b7"
   },

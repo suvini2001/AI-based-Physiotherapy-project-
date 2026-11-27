@@ -1,0 +1,152 @@
+{
+  "name": "B5-Safety Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "draft_message"
+            },
+            {
+              "name": "rule_flag",
+              "type": "array"
+            },
+            {
+              "name": "cue_ids",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "7fceb9f6-06a6-4376-b4b8-7eefd3d90315",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Review this coaching message for a physiotherapy patient:\n\nDraft message: {{ $('When Executed by Another Workflow').item.json.draft_message }}\n\nRule flags: {{ JSON.stringify($('When Executed by Another Workflow').item.json.rule_flags) }}\n\nCheck if this message is safe and appropriate to show the patient.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=You are the Safety agent in a physiotherapy team. \nYou review coaching messages before patients see them.\n\nCheck the draft message against these rules:\n1. No medical diagnosis — it must not name a condition \n   or injury\n2. No promises — it must not say the patient \"will\" \n   recover or \"will\" improve\n3. No invented numbers — it must not mention angles, \n   percentages or counts\n4. Appropriate tone — if any rule_flag has severity \n   \"high\", the message must tell the patient to see \n   their physiotherapist\n5. No dangerous advice — it must not tell the patient \n   to stop exercising or change their prescription\n\nIf the message passes ALL checks return:\n- verdict: \"approve\"\n- issues: []\n\nIf the message fails ANY check return:\n- verdict: \"revise\"\n- issues: list each problem clearly so Coaching \n  can fix it\n\nYou must return valid JSON with verdict and issues fields.",
+          "maxIterations": 4
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        208,
+        -80
+      ],
+      "id": "377ea169-1cb0-4cf4-a6da-0732cbd87981",
+      "name": "Safety Agent"
+    },
+    {
+      "parameters": {
+        "options": {
+          "maxTokens": 1000
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        192,
+        112
+      ],
+      "id": "1adcca89-c14a-469e-80f9-e30ef5c32f7f",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "L58H6H795lky0KKj",
+          "name": "OpenRouter account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"verdict\": {\n      \"type\": \"string\",\n      \"enum\": [\"approve\", \"revise\"]\n    },\n    \"issues\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    }\n  },\n  \"required\": [\"verdict\", \"issues\"]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        368,
+        128
+      ],
+      "id": "aff9a565-a53b-4a6c-a274-1e0eef6cd3d6",
+      "name": "Structured Output Parser"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "draft_message": "Great news! Your ROM improved to 104.5 degrees which means your rotator cuff is healing well. You will make a full recovery soon!",
+          "rule_flags": [
+            {
+              "code": "ROM_DROP",
+              "severity": "high",
+              "source": "rule",
+              "evidence": "mean ROM fell 29% below baseline"
+            }
+          ],
+          "cue_ids": []
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Safety Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Safety Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Safety Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "0cf3deda-55f0-4327-9e58-4bb9f08e312b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bdfac9e3aad7d598fce1354fb684dd45bfe67ba5891431c588f5b75e3f9c33b7"
+  },
+  "nodeGroups": [],
+  "id": "Oke0BcG6OU4LDuR1",
+  "tags": []
+}
