@@ -1,0 +1,51 @@
+{
+  "name": "Coaching Stub",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "tCoachin-g St-ub00-0000-0000000000000000",
+      "name": "When Called by Supervisor"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// STUB for Person B's Coaching agent. Returns a fixed, valid coaching result.\nreturn [{ json: {\n  patient_message: \"Nice work finishing your set today. Keep your shoulder relaxed and move slowly and smoothly. Your physiotherapist will review your progress.\",\n  cue_ids: [\"cue_shoulder_down\", \"cue_slow_down\"],\n  rounds_used: 1,\n  status: \"pending_review\"\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "id": "cCoachin-g St-ub00-0000-0000000000000000",
+      "name": "Coaching Stub"
+    }
+  ],
+  "connections": {
+    "When Called by Supervisor": {
+      "main": [
+        [
+          {
+            "node": "Coaching Stub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}

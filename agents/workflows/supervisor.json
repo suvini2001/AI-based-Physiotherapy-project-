@@ -1,0 +1,395 @@
+{
+  "name": "A5 - Supervisor (flattened)",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -320,
+        -40
+      ],
+      "id": "te000000-0000-0000-0000-0000000000000000",
+      "name": "When Called (entry)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        160
+      ],
+      "id": "tm000000-0000-0000-0000-0000000000000000",
+      "name": "Test Manually"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== TEST SCENARIO SWITCH ====================================================\n// Keep the name SCENARIO; change the value. Save, run.\n// Options: improving | plateau | declining_safety | fast_and_sloppy | first_session\nconst SCENARIO = \"declining_safety\";\n// Integration: the entry trigger passes the real case_file and skips this node.\n// ==============================================================================\nconst SCENARIOS = {\"improving\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":87,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":1.87,\"baseline_rom\":102,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":8},\"rule_flags\":[]},\"plateau\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":83,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":0,\"baseline_rom\":100,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":8},\"rule_flags\":[]},\"declining_safety\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":71,\"fault_counts\":{\"SHOULDER_HIKE\":3},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":-3.46,\"baseline_rom\":92.3,\"quality_band\":\"fair\",\"incomplete_attempts\":0,\"sessions_in_history\":7},\"rule_flags\":[{\"code\":\"NEW_COMPENSATION\",\"severity\":\"medium\",\"source\":\"rule\",\"evidence\":\"SHOULDER_HIKE not seen in history\"}]},\"fast_and_sloppy\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":85,\"fault_counts\":{\"TOO_FAST\":3},\"fast_rep_share\":1,\"rom_slope_deg_per_session\":0.7,\"baseline_rom\":101,\"quality_band\":\"fair\",\"incomplete_attempts\":0,\"sessions_in_history\":3},\"rule_flags\":[{\"code\":\"NEW_COMPENSATION\",\"severity\":\"medium\",\"source\":\"rule\",\"evidence\":\"TOO_FAST not seen in history\"},{\"code\":\"RUSHED_REPS\",\"severity\":\"low\",\"source\":\"rule\",\"evidence\":\"majority of reps too fast\"}]},\"first_session\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":79,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":null,\"baseline_rom\":null,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":0},\"rule_flags\":[]}};\nreturn [{ json: { case_file: SCENARIOS[SCENARIO] } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        160
+      ],
+      "id": "Load Sce-nari-o (t-est)-0000000000000000",
+      "name": "Load Scenario (test)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// CODE sets the trend verdict from the slope (not the model).\nconst input = $input.first().json || {};\nconst cf = input.case_file || input;\nconst m = (cf && cf.metrics) || {};\nconst slope = m.rom_slope_deg_per_session;\nconst sessions = (m.sessions_in_history != null) ? m.sessions_in_history : 0;\nlet trend;\nif (slope === null || slope === undefined || sessions < 2) trend = \"insufficient_data\";\nelse if (slope > 0.5)  trend = \"improving\";\nelse if (slope < -0.5) trend = \"declining\";\nelse                   trend = \"stable\";\nreturn [{ json: { case_file: cf, trend } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        40
+      ],
+      "id": "Set Tren-d (c-ode)-0000-0000000000000000",
+      "name": "Set Trend (code)"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=A patient finished a session. Case file:\n{{ JSON.stringify($json.case_file) }}\n\nAssess the movement quality and produce the structured output.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Assessment agent in a physiotherapy team. You review ONE finished session.\nYou are GIVEN the case file (metrics, rule flags, prescription). Use ONLY the numbers in it; never calculate new ones.\nCopy quality_band verbatim from the case file. Copy fault labels exactly as they appear (code or sentence). Do not diagnose or change the prescription.\nReturn: quality_band, 1-3 key_findings naming faults, a 2-3 sentence summary_for_physio.",
+          "maxIterations": 3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        300,
+        0
+      ],
+      "id": "Assessme-nt A-gent-0000-0000000000000000",
+      "name": "Assessment Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        240,
+        240
+      ],
+      "id": "Gemini (-Asse-ssme-nt)0-0000000000000000",
+      "name": "Gemini (Assessment)",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gemini account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"quality_band\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"good\",\n        \"fair\",\n        \"poor\"\n      ]\n    },\n    \"key_findings\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"minItems\": 0,\n      \"maxItems\": 3\n    },\n    \"summary_for_physio\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"quality_band\",\n    \"key_findings\",\n    \"summary_for_physio\"\n  ],\n  \"additionalProperties\": false\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        400,
+        240
+      ],
+      "id": "Parser (-Asse-ssme-nt)0-0000000000000000",
+      "name": "Parser (Assessment)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Recover case_file + trend (the agent output dropped them) and attach assessment.\nconst base = $('Set Trend (code)').first().json;\nconst assessment = $input.first().json.output ?? $input.first().json;\nreturn [{ json: { case_file: base.case_file, trend: base.trend, assessment } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        0
+      ],
+      "id": "Collect -Asse-ssme-nt00-0000000000000000",
+      "name": "Collect Assessment"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=A patient finished a session. Case file:\n{{ JSON.stringify($json.case_file) }}\n\nThe system has already decided the trend as: {{ $json.trend }}  (copy this verbatim).\nAssessment reported these findings: {{ JSON.stringify(($json.assessment||{}).key_findings || []) }}.\nExplain the progress and produce the structured output.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Progress agent. You explain how a patient is progressing.\nThe trend has ALREADY been decided and is given to you. Copy it verbatim; NEVER change it or recompute it.\nIf trend is insufficient_data: return it, an empty findings list, and one sentence that this is an early session with no history.\nOtherwise: from the case file's fault_counts and history, name the faults that are new or worsening. Use labels exactly as given.\nUse only the given values. Do not diagnose or change the prescription.\nReturn: trend (verbatim), 0-3 findings, a 2-3 sentence summary_for_physio.",
+          "maxIterations": 3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        760,
+        0
+      ],
+      "id": "Progress- Age-nt00-0000-0000000000000000",
+      "name": "Progress Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        700,
+        240
+      ],
+      "id": "Gemini (-Prog-ress-)000-0000000000000000",
+      "name": "Gemini (Progress)",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gemini account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"trend\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"improving\",\n        \"stable\",\n        \"declining\",\n        \"insufficient_data\"\n      ]\n    },\n    \"findings\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"minItems\": 0,\n      \"maxItems\": 3\n    },\n    \"summary_for_physio\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"trend\",\n    \"findings\",\n    \"summary_for_physio\"\n  ],\n  \"additionalProperties\": false\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        860,
+        240
+      ],
+      "id": "Parser (-Prog-ress-)000-0000000000000000",
+      "name": "Parser (Progress)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const prev = $('Collect Assessment').first().json;\nconst progress = $input.first().json.output ?? $input.first().json;\nreturn [{ json: { ...prev, progress } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        0
+      ],
+      "id": "Collect -Prog-ress-0000-0000000000000000",
+      "name": "Collect Progress"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// STUB for Person B's Coaching agent (code, not an agent — no nesting).\nconst prev = $input.first().json;\nreturn [{ json: { ...prev, coaching: {\n  patient_message: \"Nice work finishing your set today. Keep your shoulder relaxed and move slowly and smoothly. Your physiotherapist will review your progress.\",\n  cue_ids: [\"cue_shoulder_down\",\"cue_slow_down\"], rounds_used: 1, status: \"pending_review\"\n} } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        0
+      ],
+      "id": "Coaching- (st-ub)0-0000-0000000000000000",
+      "name": "Coaching (stub)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// STUB for Person B's Safety agent.\nconst prev = $input.first().json;\nreturn [{ json: { ...prev, review: { verdict:\"approve\", issues:[], extra_flags:[] } } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1420,
+        0
+      ],
+      "id": "Safety (-stub-)000-0000-0000000000000000",
+      "name": "Safety (stub)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// A6 — assemble the merged result + a simple pipeline trace (no tool calls now).\nconst d = $input.first().json;\nconst line = (o)=> JSON.stringify(o ?? {}).slice(0,160);\nconst agent_trace = [\n  { step:1, from:\"pipeline\", to:\"get_case_file\", message:\"load case file\", reply_summary: line(d.case_file && d.case_file.metrics) },\n  { step:2, from:\"pipeline\", to:\"set_trend\",     message:\"compute trend\",   reply_summary: \"trend=\"+d.trend },\n  { step:3, from:\"pipeline\", to:\"assessment\",    message:\"assess quality\",  reply_summary: line(d.assessment) },\n  { step:4, from:\"pipeline\", to:\"progress\",      message:\"trend + new/worsening faults\", reply_summary: line(d.progress) },\n  { step:5, from:\"pipeline\", to:\"coaching\",      message:\"draft patient message\", reply_summary: line(d.coaching) },\n  { step:6, from:\"pipeline\", to:\"safety\",        message:\"review coaching\",  reply_summary: line(d.review) },\n];\nreturn [{ json: {\n  supervisor_summary: `Quality ${d.assessment ? d.assessment.quality_band : \"?\"}, trend ${d.trend}; coaching ${d.review ? d.review.verdict : \"?\"}d (pending physio review).`,\n  agent_trace,\n  calls_per_agent: { assessment:1, progress:1, coaching:1, safety:1 },\n  assessment: d.assessment, progress: d.progress, coaching: d.coaching, review: d.review,\n  case_file: d.case_file, trend: d.trend\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1620,
+        0
+      ],
+      "id": "Build ag-ent_-trac-e (A-6)00000000000000",
+      "name": "Build agent_trace (A6)"
+    }
+  ],
+  "connections": {
+    "When Called (entry)": {
+      "main": [
+        [
+          {
+            "node": "Set Trend (code)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Manually": {
+      "main": [
+        [
+          {
+            "node": "Load Scenario (test)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Scenario (test)": {
+      "main": [
+        [
+          {
+            "node": "Set Trend (code)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Trend (code)": {
+      "main": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (Assessment)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser (Assessment)": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Assessment Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assessment Agent": {
+      "main": [
+        [
+          {
+            "node": "Collect Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Assessment": {
+      "main": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (Progress)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser (Progress)": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Progress Agent": {
+      "main": [
+        [
+          {
+            "node": "Collect Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Progress": {
+      "main": [
+        [
+          {
+            "node": "Coaching (stub)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coaching (stub)": {
+      "main": [
+        [
+          {
+            "node": "Safety (stub)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safety (stub)": {
+      "main": [
+        [
+          {
+            "node": "Build agent_trace (A6)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
