@@ -24,6 +24,24 @@ data/fit3d/
 data/calib_pairs_fit3d.npz
 data/calib_pairs_all.npz
 data/population_curve_fit3d.json
+# Local web development credentials, environments, and private artifacts
+.venv-web/
+.env
+.env.*
+!.env.example
+*.sql
+*.dump
+*.sqlite*
+*.db
+*.log
+offline_queue.json
+.pytest_cache/
+
+# Browser test artifacts
+dashboard/test-results/
+dashboard/playwright-report/
+
+# Research environments and tracking artifacts
 fit3d dataset
 mlflow.db
 mlruns/
@@ -40,3 +58,12 @@ backend/physio.db
 *.db
 
 live_frame_log.csv
+
+# Isolated browser inference runtime
+.venv-ai/
+
+# Private fictional-data demo
+.local-ai-demo/
+
+# Private AI library cache (reused between workers)
+.local-ai-cache/

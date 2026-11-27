@@ -1,18 +1,16 @@
 
-import json
 import os
-import random
+import json
+from contextlib import asynccontextmanager
+from ai_adapter import adapter
 import secrets
-import string
-import subprocess
-import sys
-import live_log
+
 
 from dotenv import load_dotenv
 load_dotenv()
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Literal
 
 from argon2 import PasswordHasher
 from argon2.exceptions import (
@@ -68,9 +66,8 @@ Base.metadata.create_all(bind=engine)
 # CONFIGURATION
 # ============================================================
 
-# Existing clinician demo authentication is retained.
-# It must be replaced before production use.
-SECRET_KEY = os.getenv("SECRET_KEY")
+# Explicit local configuration; missing credentials fail closed.
+SECRET_KEY = os.getenv("CLINICIAN_JWT_SECRET")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
@@ -80,20 +77,24 @@ PATIENT_TOKEN_EXPIRE_MINUTES = 60
 
 password_hasher = PasswordHasher()
 
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    adapter.shutdown()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="PhysioTrack API",
     version="1.1-dev",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "http://localhost:3000",
-    ],
+    allow_origins=os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:3000",
+    ).split(','),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -108,35 +109,35 @@ oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="auth/login"
 )
 
-_PHYSIO_DEMO_PASSWORD = os.getenv("PHYSIO_DEMO_PASSWORD", "")
 
-PHYSIO_ACCOUNTS = {
-    "DR001": {
-        "id": "DR001",
-        "name": "Dr. Priya Nair",
-        "password":  _PHYSIO_DEMO_PASSWORD,
-        "specialty": "Orthopaedic Rehabilitation",
-    },
-    "DR002": {
-        "id": "DR002",
-        "name": "Dr. Kasun Perera",
-        "password":  _PHYSIO_DEMO_PASSWORD,
-        "specialty": "Neurological Rehabilitation",
-    },
-}
+# Local demo accounts are explicitly configured; passwords are Argon2 hashes.
+PHYSIO_ACCOUNTS = {}
+if os.getenv("CLINICIAN_PASSWORD_HASH"):
+    account_id = os.getenv("CLINICIAN_ID", "DR001").upper()
+    PHYSIO_ACCOUNTS[account_id] = {
+        "id": account_id,
+        "name": os.getenv("CLINICIAN_NAME", "Demo Clinician"),
+        "specialty": "Physiotherapy demo",
+        "password_hash": os.environ["CLINICIAN_PASSWORD_HASH"],
+    }
 
 
-def verify_password(plain: str, stored: str) -> bool:
-    # Legacy clinician-only verification.
-    # This is not used for patient passwords.
-    return secrets.compare_digest(plain, stored)
+def require_clinician_config():
+    if not SECRET_KEY or len(SECRET_KEY) < 32 or not PHYSIO_ACCOUNTS:
+        raise HTTPException(503, "Clinician authentication is not configured")
+    return SECRET_KEY
+
+
+def public_physio(account):
+    return {key: account[key] for key in ("id", "name", "specialty")}
 
 
 def create_access_token(
     data: dict,
     expires_delta: Optional[timedelta] = None,
 ):
-    to_encode = data.copy()
+    require_clinician_config()
+    to_encode = {**data, "role": "clinician"}
 
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=15)
@@ -160,17 +161,20 @@ def get_current_physio(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    require_clinician_config()
     try:
         payload = jwt.decode(
             token,
             SECRET_KEY,
             algorithms=[ALGORITHM],
+            options={"require_exp": True, "require_sub": True},
         )
 
         physio_id = payload.get("sub")
 
         if (
-            physio_id is None
+            payload.get("role") != "clinician"
+            or physio_id is None
             or physio_id not in PHYSIO_ACCOUNTS
         ):
             raise credentials_exception
@@ -185,15 +189,16 @@ def get_current_physio(
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
 ):
+    require_clinician_config()
     physio = PHYSIO_ACCOUNTS.get(
         form_data.username.upper()
     )
 
     if (
         not physio
-        or not verify_password(
+        or not verify_patient_password(
             form_data.password,
-            physio["password"],
+            physio["password_hash"],
         )
     ):
         raise HTTPException(
@@ -223,7 +228,7 @@ def login(
 def get_me(
     current=Depends(get_current_physio),
 ):
-    return current
+    return public_physio(current)
 
 
 # ============================================================
@@ -239,8 +244,8 @@ class SecurePatientRegistration(BaseModel):
 
 
 class SecurePatientLogin(BaseModel):
-    patient_id: str
-    password: str
+    patient_id: str = Field(min_length=1, max_length=32)
+    password: str = Field(min_length=1, max_length=128)
 
 
 def require_patient_secret():
@@ -330,6 +335,7 @@ def get_current_patient(
             credentials.credentials,
             signing_secret,
             algorithms=[ALGORITHM],
+            options={"require_exp": True, "require_sub": True},
         )
 
         if payload.get("role") != "patient":
@@ -377,15 +383,12 @@ def patient_response(
         "id": patient.id,
         "patient_id": patient.patient_id,
         "name": patient.name,
-        "exercise": (
-            presc.exercise
-            if presc
-            else "elbow_flexion"
-        ),
+        "has_prescription": presc is not None,
+        "exercise": presc.exercise if presc else None,
         "target_reps": (
             presc.target_reps
             if presc
-            else 10
+            else None
         ),
     }
 
@@ -517,6 +520,17 @@ def patient_me(
 # PROTECTED PATIENT SESSION HISTORY
 # ============================================================
 
+def measurement_provenance(session):
+    try:
+        raw = json.loads(session.raw_json or '{}')
+        source = raw.get('source', {})
+        if isinstance(source, dict) and source.get('pipeline') == 'research_pipeline':
+            return {'measurement_source': 'research_pipeline', 'side': raw.get('side'), 'clinically_validated': False}
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return {'measurement_source': 'legacy_unverified', 'side': None, 'clinically_validated': False}
+
+
 @app.get("/patient/me/last-session")
 def patient_my_last_session(
     patient: Patient = Depends(get_current_patient),
@@ -539,6 +553,7 @@ def patient_my_last_session(
         "total_reps": last.total_reps,
         "mean_rom": last.mean_rom,
         "date": last.date,
+        **measurement_provenance(last),
     }
 
 
@@ -566,6 +581,7 @@ def list_patients(
 
         result.append({
             "id": p.id,
+            "patient_id": p.patient_id,
             "name": p.name,
             "dob": p.dob,
             "notes": p.notes,
@@ -632,6 +648,7 @@ def get_sessions(
             "mean_rom": s.mean_rom,
             "mean_quality": s.mean_quality,
             "date": s.date,
+            **measurement_provenance(s),
         }
         for s in sessions
     ]
@@ -670,80 +687,35 @@ def get_reps(
 
 
 # ============================================================
-# EXISTING SESSION UPLOAD
-#
-# WARNING:
-# This legacy endpoint is unauthenticated.
-# It must be secured before real patient use.
+# SESSION UPLOAD — CLOSED UNTIL TRUSTED INFERENCE IS VERIFIED
 # ============================================================
 
 @app.post("/api/sessions")
-def upload_session(
-    data: dict,
-    db: Session = Depends(get_db),
-):
-    summary = data.get("summary", {})
-
-    s = SessionModel(
-        patient_id=data.get("patient_id", 1),
-        exercise=data["exercise"],
-        total_reps=data["total_reps"],
-        mean_rom=summary.get("mean_rom"),
-        mean_quality=None,
-        date=data["date"],
-        raw_json=json.dumps(data),
-    )
-
-    db.add(s)
-    db.commit()
-    db.refresh(s)
-
-    for rep in data.get("reps", []):
-        r = Rep(
-            session_id=s.id,
-            rep_number=rep["rep_number"],
-            max_angle=rep["max_angle"],
-            min_angle=rep["min_angle"],
-            rom=rep["rom"],
-            duration_s=rep["duration_s"],
-            quality_score=rep.get("quality_score"),
-        )
-
-        db.add(r)
-        db.flush()
-
-        for fault in rep.get("faults", []):
-            db.add(
-                Fault(
-                    rep_id=r.id,
-                    fault_text=fault,
-                )
-            )
-
-    db.commit()
-
-    return {
-        "status": "ok",
-        "session_id": s.id,
-    }
+def upload_session(_=Depends(get_current_patient)):
+    # Only a trusted, tested inference adapter may write measurements.
+    raise HTTPException(503, "Direct measurement uploads are disabled. Only server AI sessions can save research results.")
 
 
 # ============================================================
 # EXISTING PRESCRIPTION MANAGEMENT
 # ============================================================
 
+class PrescriptionInput(BaseModel):
+    patient_id: int = Field(gt=0)
+    exercise: Literal["elbow_flexion", "shoulder_abduction"]
+    target_reps: int = Field(ge=1, le=50)
+    target_rom: float | None = Field(default=None, ge=0, le=180)
+
+
 @app.post("/api/prescriptions")
 def set_prescription(
-    data: dict,
+    data: PrescriptionInput,
     db: Session = Depends(get_db),
     _=Depends(get_current_physio),
 ):
-    p = Prescription(
-        patient_id=data["patient_id"],
-        exercise=data["exercise"],
-        target_reps=data["target_reps"],
-        target_rom=data.get("target_rom"),
-    )
+    if db.get(Patient, data.patient_id) is None:
+        raise HTTPException(404, "Patient not found")
+    p = Prescription(**data.model_dump())
 
     db.add(p)
     db.commit()
@@ -751,549 +723,89 @@ def set_prescription(
     return {"status": "ok"}
 
 
+ 
 # ============================================================
-# LIVE MONITORING — ROOMS + TICKETS + FRAME-AGE LOGGING
+# LEGACY ACQUISITION ROUTES — DISABLED
+# The browser AI uses authenticated routes in ai_routes.py.
 # ============================================================
-
-import uuid as _uuid
-from collections import defaultdict
-
-# One set of WebSocket connections per patient id
-# { patient_id (int) -> set of WebSocket }
-_rooms: dict[int, set] = defaultdict(set)
-
-# Short-lived ws-tickets
-# { ticket (str) -> {"patient_id": int, "physio_id": str, "expires": datetime} }
-_ws_tickets: dict[str, dict] = {}
-
-WS_TICKET_TTL_SECONDS = 30
-
-
-# ── Ticket endpoint ──────────────────────────────────────────
-
-@app.post("/api/ws-ticket")
-def issue_ws_ticket(
-    data: dict,
-    db: Session = Depends(get_db),
-    physio=Depends(get_current_physio),
-):
-    """
-    A physio requests a one-time ticket to open a WebSocket
-    for a specific patient's live feed.
-
-    Returns a ticket string valid for 30 seconds.
-    The ticket is consumed when the WebSocket handshake succeeds.
-    """
-    patient_id = data.get("patient_id")
-
-    if not isinstance(patient_id, int):
-        raise HTTPException(
-            status_code=400,
-            detail="patient_id must be an integer",
-        )
-
-    # Check the patient exists
-    patient = db.query(Patient).filter(
-        Patient.id == patient_id
-    ).first()
-
-    if patient is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found",
-        )
-
-    # Check the physio is assigned to this patient
-    assignment = db.query(PhysioPatient).filter(
-        PhysioPatient.patient_id == patient_id,
-        PhysioPatient.physio_id == physio["id"],
-    ).first()
-
-    if assignment is None:
-        raise HTTPException(
-            status_code=403,
-            detail="Not assigned to this patient",
-        )
-
-    ticket = str(_uuid.uuid4())
-    expires = datetime.now(timezone.utc) + timedelta(
-        seconds=WS_TICKET_TTL_SECONDS
-    )
-
-    _ws_tickets[ticket] = {
-        "patient_id": patient_id,
-        "physio_id": physio["id"],
-        "expires": expires,
-    }
-
-    return {
-        "ticket": ticket,
-        "expires_in_seconds": WS_TICKET_TTL_SECONDS,
-    }
-
-
-# ── WebSocket endpoint ───────────────────────────────────────
 
 @app.websocket("/ws/live/{patient_id}")
-async def ws_live(
-    ws: WebSocket,
-    patient_id: int,
-    ticket: str = "",
-):
-    """
-    Doctor connects to a patient's live room using a ticket.
-    Ticket is consumed on successful connect.
-    """
-    # Validate ticket before accepting the connection
-    ticket_data = _ws_tickets.get(ticket)
+async def ws_live(ws: WebSocket, patient_id: int):
+    await ws.close(
+        code=1008,
+        reason="Legacy WebSocket unavailable"
+    )
 
-    if ticket_data is None:
-        await ws.close(code=4401)
-        return
-
-    if ticket_data["patient_id"] != patient_id:
-        await ws.close(code=4403)
-        return
-
-    if datetime.now(timezone.utc) > ticket_data["expires"]:
-        del _ws_tickets[ticket]
-        await ws.close(code=4401)
-        return
-
-    # Consume the ticket — single use
-    del _ws_tickets[ticket]
-
-    await ws.accept()
-    _rooms[patient_id].add(ws)
-
-    try:
-        while True:
-            await ws.receive_text()   # keep alive; client sends heartbeats
-    except Exception:
-        pass
-    finally:
-        _rooms[patient_id].discard(ws)
-        if not _rooms[patient_id]:
-            del _rooms[patient_id]
-
-
-# ── Frame push with frame-age logging ───────────────────────
 
 @app.post("/api/live_frame")
-async def push_frame(data: dict):
-    """
-    Patient device pushes one live frame.
-    Server stamps it with server_ts and computes frame_age_ms.
-    Broadcasts only to doctors in that patient's room.
-    """
-    server_ts = datetime.now(timezone.utc).timestamp()
-
-    patient_id = data.get("patient_id")
-
-    # frame_age_ms: how old the frame is by the time the server sees it
-    client_ts = data.get("timestamp")
-    frame_age_ms = None
-    if isinstance(client_ts, (int, float)):
-        frame_age_ms = round((server_ts - client_ts) * 1000, 1)
-
-    # Attach server timestamp and age to the payload before broadcasting
-    enriched = {
-        **data,
-        "server_ts": round(server_ts, 3),
-        "frame_age_ms": frame_age_ms,
-    }
-
-    # Log frame age for the experiment (Week 8)
-    if frame_age_ms is not None:
-        print(
-            f"[live] patient={patient_id} "
-            f"frame_age={frame_age_ms}ms "
-            f"angle={data.get('joint_angle')} "
-            f"state={data.get('state')}"
-        )
-        
-        live_log.log_frame(
-            patient_id=patient_id,
-            server_ts=server_ts,
-            client_ts=client_ts,
-            frame_age_ms=frame_age_ms,
-            joint_angle=data.get("joint_angle"),
-            state=data.get("state"),
-            rep_count=data.get("rep_count"),
-            fault=data.get("fault"),
-        )
-
-    # Broadcast only to this patient's room
-    if patient_id is None:
-        # Legacy: broadcast to everyone (keeps old behaviour working)
-        targets = {ws for room in _rooms.values() for ws in room}
-    else:
-        targets = set(_rooms.get(int(patient_id), set()))
-
-    dead = set()
-    for ws in targets:
-        try:
-            await ws.send_json(enriched)
-        except Exception:
-            dead.add(ws)
-
-    # Clean up dead connections
-    for ws in dead:
-        for room in _rooms.values():
-            room.discard(ws)
-
-    return {"ok": True, "frame_age_ms": frame_age_ms}
-
-# ── RTT report from client ───────────────────────────────────
-
-class RTTReport(BaseModel):
-    patient_id: int
-    server_ts: float   # the server_ts the client received in the frame
-    rtt_ms: float = Field(gt=0)      # client measured: (now - original_client_ts) * 1000
-
-
-@app.post("/api/live_rtt")
-async def receive_rtt(report: RTTReport):
-    """
-    Client reports the round-trip time for a frame.
-    The client measures: time it sent the frame → time it received
-    the enriched frame back from the server via WebSocket.
-    """
-    print(
-        f"[rtt] patient={report.patient_id} "
-        f"rtt={report.rtt_ms}ms "
-        f"server_ts={report.server_ts}"
+def push_frame(_=Depends(get_current_patient)):
+    raise HTTPException(
+        503,
+        "Legacy live frame uploads are disabled"
     )
 
-    live_log.log_rtt(
-        patient_id=report.patient_id,
-        server_ts=report.server_ts,
-        rtt_ms=report.rtt_ms,
-    )
-
-    return {"ok": True}
-
-
-# ============================================================
-# EXISTING DEVELOPMENT SEED
-#
-# WARNING:
-# Disable/remove before deployment.
-# ============================================================
 
 @app.post("/api/seed")
-def seed(
-    db: Session = Depends(get_db),
-):
-    if db.query(Patient).count() > 0:
-        return {"status": "already seeded"}
-
-    patients = [
-        Patient(
-            name="Amara Silva",
-            dob="1985-03-12",
-            notes="Post-op elbow fracture",
-        ),
-        Patient(
-            name="Nimal Fernando",
-            dob="1972-07-29",
-            notes="Rotator cuff repair",
-        ),
-        Patient(
-            name="Sanduni Perera",
-            dob="1990-11-05",
-            notes="Frozen shoulder",
-        ),
-    ]
-
-    for p in patients:
-        db.add(p)
-
-    db.commit()
-
-    return {
-        "status": "seeded",
-        "patients": 3,
-    }
-
-
-# ============================================================
-# EXISTING LEGACY PATIENT AUTHENTICATION
-#
-# WARNING:
-# These endpoints are insecure and retained only to
-# prevent disruption during development.
-#
-# The React frontend still uses these endpoints.
-# ============================================================
-
-def generate_patient_id(db):
-    while True:
-        pid = "PT" + "".join(
-            random.choices(
-                string.digits,
-                k=4,
-            )
-        )
-
-        if not db.query(Patient).filter(
-            Patient.patient_id == pid
-        ).first():
-            return pid
+def seed(_=Depends(get_current_physio)):
+    raise HTTPException(
+        410,
+        "Register fictional patients through the patient portal"
+    )
 
 
 @app.post("/patient/register")
-def patient_register(
-    data: dict,
-    db: Session = Depends(get_db),
-):
-    name = data.get("name", "").strip()
-
-    if not name:
-        raise HTTPException(
-            status_code=400,
-            detail="Name is required",
-        )
-
-    pid = generate_patient_id(db)
-
-    p = Patient(
-        name=name,
-        patient_id=pid,
-        notes="Self-registered",
-    )
-
-    db.add(p)
-    db.commit()
-    db.refresh(p)
-
-    return {
-        "patient_id": pid,
-        "name": p.name,
-        "id": p.id,
-    }
-
-
 @app.post("/patient/login")
-def patient_login(
-    data: dict,
-    db: Session = Depends(get_db),
-):
-    pid = data.get(
-        "patient_id", ""
-    ).strip().upper()
-
-    name = data.get(
-        "name", ""
-    ).strip().lower()
-
-    p = db.query(Patient).filter(
-        Patient.patient_id == pid
-    ).first()
-
-    if not p:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient ID not found",
-        )
-
-    if p.name.strip().lower() != name:
-        raise HTTPException(
-            status_code=401,
-            detail="Name does not match",
-        )
-
-    return patient_response(p, db)
+def legacy_patient_auth():
+    raise HTTPException(
+        410,
+        "Use password-based patient authentication"
+    )
 
 
 @app.get("/patient/{patient_id}/last-session")
 def patient_last_session(
     patient_id: int,
+    patient: Patient = Depends(get_current_patient),
     db: Session = Depends(get_db),
 ):
-    last = db.query(SessionModel).filter(
-        SessionModel.patient_id == patient_id
-    ).order_by(
-        SessionModel.id.desc()
-    ).first()
-
-    if not last:
-        return {
-            "total_reps": 0,
-            "mean_rom": None,
-            "date": None,
-        }
-
-    return {
-        "total_reps": last.total_reps,
-        "mean_rom": last.mean_rom,
-        "date": last.date,
-    }
-
-
-# ============================================================
-# EXISTING DESKTOP AI LAUNCHER
-#
-# Preserved for compatibility.
-#
-# WARNING:
-# These endpoints are not authenticated.
-# The original launcher uses a Windows path.
-# The browser-based simulation does not use it.
-# ============================================================
-
-active_process = {}
+    if patient_id != patient.id:
+        raise HTTPException(
+            403,
+            "Cannot access another patient's records"
+        )
+    return patient_my_last_session(patient, db)
 
 
 @app.post("/api/launch-session")
-def launch_session(
-    data: dict,
-    db: Session = Depends(get_db),
-):
-    patient_id = data.get("patient_id")
-    exercise = data.get(
-        "exercise",
-        "elbow",
-    )
-    side = data.get(
-        "side",
-        "right",
-    )
-
-    exercise_arg = (
-        "shoulder"
-        if exercise == "shoulder_abduction"
-        else "elbow"
-    )
-
-    project_root = (
-        r"D:\3YP\AI-based-Physiotherapy-project-"
-    )
-
-    script_path = os.path.join(
-        project_root,
-        "demo_cv.py",
-    )
-
-    python_exe = os.path.join(
-        project_root,
-        ".venv",
-        "Scripts",
-        "python.exe",
-    )
-
-    log_path = os.path.join(
-        project_root,
-        "session_launch.log",
-    )
-
-    if not os.path.exists(script_path):
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"demo_cv.py not found at {script_path}"
-            ),
-        )
-
-    if not os.path.exists(python_exe):
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Python not found at {python_exe}"
-            ),
-        )
-
-    if str(patient_id) in active_process:
-        try:
-            active_process[
-                str(patient_id)
-            ].terminate()
-        except Exception:
-            pass
-
-    log_file = open(log_path, "w")
-
-    print(
-        f"Launching: {python_exe} {script_path} "
-        f"--exercise {exercise_arg} "
-        f"--side {side} "
-        f"--patient-id {patient_id}"
-    )
-
-    proc = subprocess.Popen(
-        [
-            python_exe,
-            script_path,
-            "--exercise",
-            exercise_arg,
-            "--side",
-            side,
-            "--patient-id",
-            str(patient_id),
-        ],
-        cwd=project_root,
-        stdout=log_file,
-        stderr=log_file,
-    )
-
-    log_file.close()
-
-    active_process[str(patient_id)] = proc
-
-    print(f"Launched PID {proc.pid}")
-
-    return {
-        "status": "launched",
-        "pid": proc.pid,
-        "exercise": exercise_arg,
-    }
-
-
 @app.post("/api/stop-session")
-def stop_session(data: dict):
-    patient_id = str(
-        data.get("patient_id")
+def desktop_session(_=Depends(get_current_patient)):
+    raise HTTPException(
+        503,
+        "Desktop launcher disabled; use the browser AI session"
     )
-
-    if patient_id in active_process:
-        try:
-            active_process[
-                patient_id
-            ].terminate()
-
-            del active_process[patient_id]
-
-        except Exception:
-            pass
-
-    return {"status": "stopped"}
 
 
 @app.get("/api/session-status/{patient_id}")
-def session_status(patient_id: str):
-    proc = active_process.get(patient_id)
-
-    if proc is None:
-        return {"running": False}
-
-    poll = proc.poll()
-
-    if poll is not None:
-        del active_process[patient_id]
-
-        return {
-            "running": False,
-            "exit_code": poll,
-        }
-
+def session_status(
+    patient_id: int,
+    patient: Patient = Depends(get_current_patient),
+):
+    if patient_id != patient.id:
+        raise HTTPException(
+            403,
+            "Cannot access another patient's records"
+        )
     return {
-        "running": True,
-        "pid": proc.pid,
+        "running": False,
+        "available": False,
     }
 
-# ============================================================
-# AUDIT LOGGING HELPER
-# ============================================================
+
+@app.get("/patient/me/ai-status")
+def ai_status(_=Depends(get_current_patient)):
+    return adapter.status()
+
+
 
 def audit(
     db: Session,
@@ -1563,3 +1075,5 @@ def get_audit_log(
         }
         for e in entries
     ]
+from ai_routes import install_ai_routes
+install_ai_routes(app, get_current_patient, get_current_physio, get_db, latest_prescription)
