@@ -1,0 +1,20 @@
+# HTTPS is automatic once DOMAIN points at this server. For local dev use :80.
+{$DOMAIN:localhost} {
+	encode gzip
+	# API + WebSocket
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /ws/* {
+		reverse_proxy api:8000
+	}
+	handle /auth/* {
+		reverse_proxy api:8000
+	}
+	# PWA static site (built web/ served by Caddy; swap to your host if separate)
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}
