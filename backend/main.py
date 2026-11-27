@@ -11,6 +11,7 @@ load_dotenv()
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Literal
+from sync import router as sync_router
 
 from argon2 import PasswordHasher
 from argon2.exceptions import (
@@ -88,6 +89,8 @@ app = FastAPI(
     title="PhysioTrack API",
     version="1.1-dev",
 )
+
+app.include_router(sync_router)
 
 app.add_middleware(
     CORSMiddleware,
