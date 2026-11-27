@@ -1,0 +1,409 @@
+{
+  "name": "A5 - Supervisor",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -80,
+        -80
+      ],
+      "id": "te000000-0000-0000-0000-0000000000000000",
+      "name": "When Called (entry)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        160
+      ],
+      "id": "tm000000-0000-0000-0000-0000000000000000",
+      "name": "Test Manually"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== TEST SCENARIO SWITCH (Supervisor entry) ==================================\n// Keep the name SCENARIO on the left; change the value. Save, run.\n// To test end-to-end, set the SAME scenario in the shared get_case_file tool AND\n// in the Progress agent's Load Scenario node, so trend and metrics agree.\nconst SCENARIO = \"declining_safety\";\n// ================================================================================\nconst SCENARIOS = {\"improving\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":87,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":1.87,\"baseline_rom\":102,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":8},\"rule_flags\":[]},\"plateau\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":83,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":0,\"baseline_rom\":100,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":8},\"rule_flags\":[]},\"declining_safety\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":71,\"fault_counts\":{\"SHOULDER_HIKE\":3},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":-3.46,\"baseline_rom\":92.3,\"quality_band\":\"fair\",\"incomplete_attempts\":0,\"sessions_in_history\":7},\"rule_flags\":[{\"code\":\"NEW_COMPENSATION\",\"severity\":\"medium\",\"source\":\"rule\",\"evidence\":\"SHOULDER_HIKE not seen in history\"}]},\"fast_and_sloppy\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":85,\"fault_counts\":{\"TOO_FAST\":3},\"fast_rep_share\":1,\"rom_slope_deg_per_session\":0.7,\"baseline_rom\":101,\"quality_band\":\"fair\",\"incomplete_attempts\":0,\"sessions_in_history\":3},\"rule_flags\":[{\"code\":\"NEW_COMPENSATION\",\"severity\":\"medium\",\"source\":\"rule\",\"evidence\":\"TOO_FAST not seen in history\"},{\"code\":\"RUSHED_REPS\",\"severity\":\"low\",\"source\":\"rule\",\"evidence\":\"majority of reps too fast\"}]},\"first_session\":{\"prescription\":{\"exercise\":\"elbow_flexion\",\"target_reps\":10,\"target_rom\":120},\"metrics\":{\"reps_vs_target_pct\":100,\"rom_vs_target_pct\":79,\"fault_counts\":{},\"fast_rep_share\":0,\"rom_slope_deg_per_session\":null,\"baseline_rom\":null,\"quality_band\":\"good\",\"incomplete_attempts\":0,\"sessions_in_history\":0},\"rule_flags\":[]}};\nreturn [{ json: { case_file: SCENARIOS[SCENARIO] } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        140,
+        160
+      ],
+      "id": "load0000-0000-0000-0000-0000000000000000",
+      "name": "Load Scenario (test)"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "A patient has finished an exercise session. Coordinate the review team as instructed and return your summary for the physiotherapist.",
+        "options": {
+          "systemMessage": "You are the Supervisor of a physiotherapy review team. You coordinate four specialists for ONE finished session. Work in this order:\n\n1. Call get_case_file and read the metrics and the rule flags.\n2. Call call_assessment to get the movement-quality assessment.\n3. Call call_progress to get the trend. In your request to it, pass the fault labels Assessment reported and ask whether each is new or worsening.\n4. If Assessment and Progress clearly disagree about a fault, call the one with the weaker evidence ONCE more to double-check.\n5. Call call_coaching to draft the patient message. If ANY rule flag has severity \"high\", tell Coaching the message must ask the patient to wait for their physiotherapist.\n6. Call call_safety to review the coaching message.\n7. Reply with a short plain-language summary of the session for the physiotherapist.\n\nRules: copy numbers, trend, quality_band and rule flags from the tools, never from memory. Never remove a rule flag. Do not diagnose, give medical advice, or change the prescription.\nIf the trend is insufficient_data (a first session), skip the new/worsening fault question to Progress.",
+          "maxIterations": 12,
+          "returnIntermediateSteps": true
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        380,
+        20
+      ],
+      "id": "sup00000-0000-0000-0000-0000000000000000",
+      "name": "Supervisor Agent"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * A6 — agent_trace recorder. n8n Code node, \"Run Once for All Items\".\n * Sits after the Supervisor Agent (which must have \"Return Intermediate Steps\" ON).\n * Turns the Supervisor's tool calls into an ordered conversation log, pulls out\n * each specialist's structured result, and counts calls per agent.\n *\n * n8n gives the agent result as { output, intermediateSteps }. Each step looks like\n *   { action: { tool, toolInput, log }, observation }\n * where observation is the tool's return (object, or a JSON string). We parse both.\n */\n\nconst root = $input.first().json || {};\nconst steps = Array.isArray(root.intermediateSteps) ? root.intermediateSteps\n            : Array.isArray(root.output?.intermediateSteps) ? root.output.intermediateSteps\n            : [];\n\nconst asObj = (v) => {\n  if (v == null) return null;\n  if (typeof v === \"object\") return v.json ?? v;     // n8n sometimes wraps as {json:...}\n  if (typeof v === \"string\") { try { return JSON.parse(v); } catch { return { text: v }; } }\n  return { value: v };\n};\nconst oneLine = (v) => {\n  const o = asObj(v);\n  if (o == null) return \"\";\n  if (o.text) return String(o.text).slice(0, 160);\n  return JSON.stringify(o).slice(0, 160);\n};\nconst toolOf = (a = {}) => a.tool || a.toolName || (a.action && a.action.tool) || \"unknown\";\nconst inputOf = (a = {}) => a.toolInput ?? a.input ?? (a.action && a.action.toolInput) ?? {};\n\nconst agent_trace = [];\nconst calls_per_agent = {};\nconst results = {};               // latest parsed result per tool\n\nsteps.forEach((s, i) => {\n  const action = s.action || s;\n  const tool = toolOf(action);\n  const obs = s.observation !== undefined ? s.observation : s.result;\n  const parsed = asObj(obs);\n\n  calls_per_agent[tool] = (calls_per_agent[tool] || 0) + 1;\n  if (parsed && typeof parsed === \"object\") results[tool] = parsed;\n\n  agent_trace.push({\n    step: i + 1,\n    from: \"supervisor\",\n    to: tool,\n    message: typeof inputOf(action) === \"string\" ? inputOf(action) : JSON.stringify(inputOf(action)).slice(0, 160),\n    reply_summary: oneLine(obs),\n  });\n});\n\n// Map tool names to roles, however they were labelled.\nconst pick = (...keys) => { for (const k of keys) if (results[k]) return results[k]; return null; };\n\nconst out = {\n  supervisor_summary: typeof root.output === \"string\" ? root.output : (root.output?.text ?? \"\"),\n  agent_trace,\n  calls_per_agent,\n  assessment: pick(\"call_assessment\", \"Assessment\", \"A3 - Assessment Agent\"),\n  progress:   pick(\"call_progress\", \"Progress\", \"A4 - Progress Agent\"),\n  coaching:   pick(\"call_coaching\", \"Coaching\", \"Coaching Stub\"),\n  review:     pick(\"call_safety\", \"Safety\", \"Safety Stub\"),\n  case_file:  pick(\"get_case_file\"),\n  // handy flags for the A7 conversation checks:\n  called_fault_history_anywhere: agent_trace.some(t => /fault_history/i.test(t.to)),\n  n_agent_calls: agent_trace.length,\n};\n\nreturn [{ json: out }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        20
+      ],
+      "id": "trace000-0000-0000-0000-0000000000000000",
+      "name": "Build agent_trace (A6)"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ],
+      "id": "gem00000-0000-0000-0000-0000000000000000",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gemini account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "get_case_file",
+        "description": "Returns metrics, rule flags and the prescription. Call FIRST.",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "A2 Tool - get_case_file"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        470,
+        320
+      ],
+      "id": "get_case-_fil-e000-0000-0000000000000000",
+      "name": "get_case_file"
+    },
+    {
+      "parameters": {
+        "name": "call_assessment",
+        "description": "Returns the movement-quality assessment (quality_band, key_findings).",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "A3 - Assessment Agent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        610,
+        320
+      ],
+      "id": "call_ass-essm-ent0-0000-0000000000000000",
+      "name": "call_assessment"
+    },
+    {
+      "parameters": {
+        "name": "call_progress",
+        "description": "Returns the progress trend and which faults are new or worsening.",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "A4 - Progress Agent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        750,
+        320
+      ],
+      "id": "call_pro-gres-s000-0000-0000000000000000",
+      "name": "call_progress"
+    },
+    {
+      "parameters": {
+        "name": "call_coaching",
+        "description": "Drafts the patient coaching message. (Person B; stub for now.)",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Coaching Stub"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        890,
+        320
+      ],
+      "id": "call_coa-chin-g000-0000-0000000000000000",
+      "name": "call_coaching"
+    },
+    {
+      "parameters": {
+        "name": "call_safety",
+        "description": "Reviews the coaching message for safety. (Person B; stub for now.)",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Safety Stub"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "case_file": "={{ $json.case_file }}"
+          },
+          "schema": [
+            {
+              "id": "case_file",
+              "displayName": "case_file",
+              "required": false,
+              "type": "object",
+              "canBeUsedToMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [
+        1030,
+        320
+      ],
+      "id": "call_saf-ety0-0000-0000-0000000000000000",
+      "name": "call_safety"
+    }
+  ],
+  "connections": {
+    "When Called (entry)": {
+      "main": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Manually": {
+      "main": [
+        [
+          {
+            "node": "Load Scenario (test)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Scenario (test)": {
+      "main": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supervisor Agent": {
+      "main": [
+        [
+          {
+            "node": "Build agent_trace (A6)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_case_file": {
+      "ai_tool": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "call_assessment": {
+      "ai_tool": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "call_progress": {
+      "ai_tool": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "call_coaching": {
+      "ai_tool": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "call_safety": {
+      "ai_tool": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}

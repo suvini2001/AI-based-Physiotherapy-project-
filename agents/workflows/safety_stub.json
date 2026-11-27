@@ -1,0 +1,51 @@
+{
+  "name": "Safety Stub",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "tSafety -Stub-0000-0000-0000000000000000",
+      "name": "When Called by Supervisor"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// STUB for Person B's Safety agent. Always approves in the stub.\nreturn [{ json: { verdict: \"approve\", issues: [], extra_flags: [] } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "id": "cSafety -Stub-0000-0000-0000000000000000",
+      "name": "Safety Stub"
+    }
+  ],
+  "connections": {
+    "When Called by Supervisor": {
+      "main": [
+        [
+          {
+            "node": "Safety Stub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
