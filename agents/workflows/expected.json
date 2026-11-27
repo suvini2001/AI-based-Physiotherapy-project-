@@ -1,0 +1,7 @@
+{
+  "improving":        { "trend": "improving",         "quality_band": "good", "rule_flag_codes": [] },
+  "plateau":          { "trend": "stable",            "quality_band": "good", "rule_flag_codes": [] },
+  "declining_safety": { "trend": "declining",         "quality_band": "fair", "rule_flag_codes": ["NEW_COMPENSATION"] },
+  "fast_and_sloppy":  { "trend": "improving",         "quality_band": "fair", "rule_flag_codes": ["NEW_COMPENSATION", "RUSHED_REPS"] },
+  "first_session":    { "trend": "insufficient_data", "quality_band": "good", "rule_flag_codes": [] }
+}
