@@ -1,0 +1,86 @@
+{
+  "name": "B7-Final Check",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "coaching_output"
+            },
+            {
+              "name": "rule_flag",
+              "type": "array"
+            },
+            {
+              "name": "metrics",
+              "type": "object"
+            },
+            {
+              "name": "session_id",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "2aeb27e4-522e-4e50-8aa6-0645801464b0",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// B7 - Final Check + Fallback\n// Validates the assembled result before sending to FastAPI\n\nconst BANNED_PHRASES = [\n  \"you have\", \"diagnos\", \"medication\", \n  \"stop the exercise\", \"injury\", \"damaged\"\n];\n\nconst input = $input.first().json;\nconst coachingOutput = input.coaching_output || \"\";\nconst ruleFlags = input.rule_flags || [];\nconst metrics = input.metrics || {};\nconst sessionId = input.session_id || 0;\n\nconst errors = [];\n\n// Check 1 — coaching output exists\nif (!coachingOutput || coachingOutput.trim() === \"\") {\n  errors.push(\"coaching_output is empty\");\n}\n\n// Check 2 — banned phrases\nfor (const phrase of BANNED_PHRASES) {\n  if (coachingOutput.toLowerCase().includes(phrase.toLowerCase())) {\n    errors.push(\"banned phrase found: \" + phrase);\n  }\n}\n\n// Check 3 — no specific numbers in coaching message\nconst numberPattern = /\\b\\d+(\\.\\d+)?\\s*(degrees?|°|%|reps?|repetitions?)\\b/i;\nif (numberPattern.test(coachingOutput)) {\n  errors.push(\"coaching message contains specific numbers\");\n}\n\n// Build result\nconst hasHighFlag = ruleFlags.some(f => f.severity === \"high\");\nconst needsFallback = errors.length > 0;\n\nconst result = {\n  contract_version: \"1.0\",\n  session_id: sessionId,\n  metrics: metrics,\n  rule_flags: ruleFlags,\n  coaching: {\n    patient_message: needsFallback ? \"\" : coachingOutput,\n    status: needsFallback ? \"fallback\" : \"pending_review\"\n  },\n  llm_status: needsFallback ? \"fallback\" : \"ok\",\n  validation_errors: errors,\n  needs_physio_attention: hasHighFlag || needsFallback\n};\n\nreturn [{ json: result }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "a1ba988e-36a6-47da-b280-1343cb402901",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "session_id": 42,
+          "coaching_output": "You have a rotator cuff injury. Stop the exercise immediately and take medication.",
+          "rule_flags": [],
+          "metrics": {}
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "87764167-750b-4df2-bc1f-e750a9918147",
+  "meta": {
+    "instanceId": "bdfac9e3aad7d598fce1354fb684dd45bfe67ba5891431c588f5b75e3f9c33b7"
+  },
+  "nodeGroups": [],
+  "id": "68hz6JUFTBgXGqw3",
+  "tags": []
+}
