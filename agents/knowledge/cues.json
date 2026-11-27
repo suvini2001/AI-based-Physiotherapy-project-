@@ -1,0 +1,44 @@
+{
+  "TRUNK_LEAN": [
+    {
+      "cue_id": "cue_trunk_upright",
+      "text": "Focus on keeping your trunk upright during the movement."
+    }
+  ],
+  "SHOULDER_HIKE": [
+    {
+      "cue_id": "cue_shoulder_down",
+      "text": "Try to keep your shoulder relaxed and down during the exercise."
+    }
+  ],
+  "TOO_FAST": [
+    {
+      "cue_id": "cue_slow_down",
+      "text": "Slow down and control each movement — quality matters more than speed."
+    }
+  ],
+  "ROM_INCOMPLETE_FLEX": [
+    {
+      "cue_id": "cue_full_range",
+      "text": "Try to bend your elbow a little further to get the full range of motion."
+    }
+  ],
+  "ROM_INCOMPLETE_EXTEND": [
+    {
+      "cue_id": "cue_full_extend",
+      "text": "Try to straighten your arm fully at the end of each repetition."
+    }
+  ],
+  "ASYMMETRY": [
+    {
+      "cue_id": "cue_symmetry",
+      "text": "Try to keep both sides moving equally and smoothly."
+    }
+  ],
+  "SHOULDER_ELEVATION": [
+    {
+      "cue_id": "cue_shoulder_elevation",
+      "text": "Keep your shoulder blade stable and avoid shrugging during the movement."
+    }
+  ]
+}

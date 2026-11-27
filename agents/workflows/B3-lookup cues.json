@@ -1,0 +1,75 @@
+{
+  "name": "B3-lookup cues",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "fault_codes",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "6d814af7-e43f-417b-b6a7-d92af1773647",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// B3 - lookup_cues tool\n// Reads approved cues from cues.json and returns matches for given fault codes\n\nconst cues = {\n  \"TRUNK_LEAN\": [\n    { \"cue_id\": \"cue_trunk_upright\", \"text\": \"Focus on keeping your trunk upright during the movement.\" }\n  ],\n  \"SHOULDER_HIKE\": [\n    { \"cue_id\": \"cue_shoulder_down\", \"text\": \"Try to keep your shoulder relaxed and down during the exercise.\" }\n  ],\n  \"TOO_FAST\": [\n    { \"cue_id\": \"cue_slow_down\", \"text\": \"Slow down and control each movement — quality matters more than speed.\" }\n  ],\n  \"ROM_INCOMPLETE_FLEX\": [\n    { \"cue_id\": \"cue_full_range\", \"text\": \"Try to bend your elbow a little further to get the full range of motion.\" }\n  ],\n  \"ROM_INCOMPLETE_EXTEND\": [\n    { \"cue_id\": \"cue_full_extend\", \"text\": \"Try to straighten your arm fully at the end of each repetition.\" }\n  ],\n  \"ASYMMETRY\": [\n    { \"cue_id\": \"cue_symmetry\", \"text\": \"Try to keep both sides moving equally and smoothly.\" }\n  ],\n  \"SHOULDER_ELEVATION\": [\n    { \"cue_id\": \"cue_shoulder_elevation\", \"text\": \"Keep your shoulder blade stable and avoid shrugging during the movement.\" }\n  ],\n  \"WAIT_FOR_PHYSIO\": [\n    { \"cue_id\": \"cue_wait_physio\", \"text\": \"Please check in with your physiotherapist at your next appointment.\" }\n  ]\n};\n\n// NOTE: These cues match agents/knowledge/cues.json exactly.\n// When a physio approves new cues, update BOTH this code and cues.json.\n// TODO: On integration day, replace this with a file read from cues.json.\n\nconst input = $input.first().json;\nconst faultCodes = input.fault_codes || [];\n\nconst result = {};\nfor (const code of faultCodes) {\n  if (cues[code]) {\n    result[code] = cues[code];\n  } else {\n    result[code] = [];\n  }\n}\n\nreturn [{ json: { fault_codes: faultCodes, cues: result } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "c481f9cc-7f86-4c48-b35c-28d2de9d0c91",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "fault_codes": [
+            "TRUNK_LEAN",
+            "TOO_FAST"
+          ]
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "59b01e14-697d-4344-966c-af41461783ae",
+  "meta": {
+    "instanceId": "bdfac9e3aad7d598fce1354fb684dd45bfe67ba5891431c588f5b75e3f9c33b7"
+  },
+  "nodeGroups": [],
+  "id": "e9n9IuRjcUeVLGEK",
+  "tags": []
+}

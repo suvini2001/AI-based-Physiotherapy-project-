@@ -1,0 +1,110 @@
+{
+  "name": "B2-Rule Flags",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "case_file"
+            },
+            {
+              "name": "metrics",
+              "type": "object"
+            },
+            {
+              "name": "ev",
+              "type": "object"
+            },
+            {
+              "name": "history",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "17175a86-658a-4bb0-8333-e694bc7f28c8",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// B2 - Rule Flags Node\n// Reads metrics from the case file and raises safety flags\n// All thresholds are placeholders — get a physio to confirm the values\n\nconst THRESHOLDS = {\n  ROM_DROP_PCT: 15,\n  LOW_COMPLETION_PCT: 50,\n  RUSHED_REPS_SHARE: 0.5,\n  MANY_INCOMPLETE: 3\n};\n\nconst input = $input.first().json;\nconst metrics = input.metrics || {};\nconst history = input.history || input.ev?.history || [];\nconst flags = [];\n\n// Get actual mean_rom from session data directly\nconst meanRom = metrics.mean_rom ?? input.ev?.session?.mean_rom ?? null;\nconst baselineRom = metrics.baseline_rom ?? null;\n\n// ROM_DROP — compares actual ROM this session vs patient's own recent baseline\nif (baselineRom !== null && meanRom !== null) {\n  const dropPct = (baselineRom - meanRom) / baselineRom * 100;\n  if (dropPct > THRESHOLDS.ROM_DROP_PCT) {\n    flags.push({\n      code: \"ROM_DROP\",\n      severity: \"high\",\n      source: \"rule\",\n      evidence: \"mean ROM fell \" + Math.round(dropPct) + \"% below the 3-session baseline\"\n    });\n  }\n}\n\n// NEW_COMPENSATION — a fault appearing for the first time\nconst currentFaults = Object.keys(metrics.fault_counts || {});\nconst historyFaultCodes = new Set(\n  history.flatMap(s => Object.keys(s.fault_counts || {}))\n);\nfor (const fault of currentFaults) {\n  if (!historyFaultCodes.has(fault)) {\n    flags.push({\n      code: \"NEW_COMPENSATION\",\n      severity: \"medium\",\n      source: \"rule\",\n      evidence: fault + \" not seen in history\"\n    });\n  }\n}\n\n// LOW_COMPLETION — completed fewer than 50% of target reps\nif (metrics.reps_vs_target_pct !== undefined &&\n    metrics.reps_vs_target_pct !== null &&\n    metrics.reps_vs_target_pct < THRESHOLDS.LOW_COMPLETION_PCT) {\n  flags.push({\n    code: \"LOW_COMPLETION\",\n    severity: \"medium\",\n    source: \"rule\",\n    evidence: \"only \" + metrics.reps_vs_target_pct + \"% of target reps completed\"\n  });\n}\n\n// RUSHED_REPS — more than half the reps were too fast\nif (metrics.fast_rep_share !== undefined &&\n    metrics.fast_rep_share !== null &&\n    metrics.fast_rep_share > THRESHOLDS.RUSHED_REPS_SHARE) {\n  flags.push({\n    code: \"RUSHED_REPS\",\n    severity: \"low\",\n    source: \"rule\",\n    evidence: Math.round(metrics.fast_rep_share * 100) + \"% of reps completed too fast\"\n  });\n}\n\n// MANY_INCOMPLETE — too many incomplete attempts\nif ((metrics.incomplete_attempts || 0) >= THRESHOLDS.MANY_INCOMPLETE) {\n  flags.push({\n    code: \"MANY_INCOMPLETE\",\n    severity: \"medium\",\n    source: \"rule\",\n    evidence: metrics.incomplete_attempts + \" incomplete attempts\"\n  });\n}\n\nreturn [{ json: { ...input, rule_flags: flags } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "e037e82a-c201-4547-8451-ff2ab7f35c2a",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "metrics": {
+            "reps_vs_target_pct": 80,
+            "rom_vs_target_pct": 71,
+            "fault_counts": {
+              "SHOULDER_HIKE": 3
+            },
+            "fast_rep_share": 0.1,
+            "baseline_rom": 105,
+            "quality_band": "fair",
+            "incomplete_attempts": 0,
+            "sessions_in_history": 7
+          },
+          "ev": {
+            "session": {
+              "mean_rom": 85
+            }
+          },
+          "history": [
+            {
+              "fault_counts": {}
+            },
+            {
+              "fault_counts": {}
+            },
+            {
+              "fault_counts": {}
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "9708c4d5-fd57-4096-98cb-79df5184a24e",
+  "meta": {
+    "instanceId": "bdfac9e3aad7d598fce1354fb684dd45bfe67ba5891431c588f5b75e3f9c33b7"
+  },
+  "nodeGroups": [],
+  "id": "7DV8iCSDLNleuHHs",
+  "tags": []
+}
