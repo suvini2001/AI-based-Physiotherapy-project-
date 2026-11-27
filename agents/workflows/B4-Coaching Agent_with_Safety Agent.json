@@ -17,6 +17,10 @@
             },
             {
               "name": "trend"
+            },
+            {
+              "name": "fault_codes",
+              "type": "array"
             }
           ]
         }
@@ -125,7 +129,8 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "draft_message": "={{ $fromAI('draft_message', 'The draft coaching message to review') }}"
+            "draft_message": "={{ $fromAI('draft_message', 'The draft coaching message to review') }}",
+            "rule_flag": "={{ $fromAI('rule_flags', 'The rule flags from the session as a JSON string', 'string') }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -147,7 +152,7 @@
               "display": true,
               "canBeUsedToMatch": true,
               "type": "array",
-              "removed": true
+              "removed": false
             },
             {
               "id": "cue_ids",
@@ -178,21 +183,15 @@
     "When Executed by Another Workflow": [
       {
         "json": {
-          "quality_band": "poor",
+          "quality_band": "fair",
           "trend": "declining",
-          "findings": "Patient completed 6 reps with SHOULDER_HIKE fault on 5 reps. ROM is declining significantly.",
+          "findings": "Patient completed 8 reps with SHOULDER_HIKE fault on 4 reps.",
           "rule_flags": [
             {
               "code": "ROM_DROP",
               "severity": "high",
               "source": "rule",
-              "evidence": "mean ROM fell 29% below baseline"
-            },
-            {
-              "code": "NEW_COMPENSATION",
-              "severity": "medium",
-              "source": "rule",
-              "evidence": "SHOULDER_HIKE not seen in history"
+              "evidence": "mean ROM fell 19% below baseline"
             }
           ],
           "fault_codes": [
@@ -253,7 +252,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "09f80ed8-6272-4fac-90d1-3a18fbdd3a53",
+  "versionId": "29476b07-7832-498a-9568-01d0efe3ea63",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "bdfac9e3aad7d598fce1354fb684dd45bfe67ba5891431c588f5b75e3f9c33b7"

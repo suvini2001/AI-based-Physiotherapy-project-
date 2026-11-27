@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PhysioTrack Session Event v1",
+  "description": "Event sent from FastAPI to n8n when a session is completed",
+  "type": "object",
+  "required": ["contract_version", "event", "request_id", "patient", "prescription", "session"],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "pattern": "^1\\.",
+      "description": "Must start with 1."
+    },
+    "event": {
+      "type": "string",
+      "enum": ["session.completed"]
+    },
+    "request_id": {
+      "type": "string",
+      "description": "Unique ID for this event"
+    },
+    "sent_at": {
+      "type": "string",
+      "description": "ISO timestamp"
+    },
+    "patient": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "integer" }
+      }
+    },
+    "prescription": {
+      "type": "object",
+      "required": ["exercise", "target_reps", "target_rom"],
+      "properties": {
+        "exercise": { "type": "string" },
+        "target_reps": { "type": "integer" },
+        "target_rom": { "type": "number" }
+      }
+    },
+    "session": {
+      "type": "object",
+      "required": ["session_id", "date", "exercise", "total_reps", "mean_rom", "reps"],
+      "properties": {
+        "session_id": { "type": "integer" },
+        "date": { "type": "string" },
+        "exercise": { "type": "string" },
+        "total_reps": { "type": "integer" },
+        "mean_rom": { "type": "number" },
+        "mean_quality": { "type": "number" },
+        "incomplete_attempts": { "type": "integer" },
+        "reps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rep_number", "rom", "duration_s", "quality_score"],
+            "properties": {
+              "rep_number": { "type": "integer" },
+              "max_angle": { "type": "number" },
+              "min_angle": { "type": "number" },
+              "rom": { "type": "number" },
+              "duration_s": { "type": "number" },
+              "quality_score": { "type": "number" },
+              "faults": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": { "type": "string" },
+                    "fault_text": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "description": "Last 10 sessions, newest first",
+      "items": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "integer" },
+          "date": { "type": "string" },
+          "total_reps": { "type": "integer" },
+          "mean_rom": { "type": "number" },
+          "mean_quality": { "type": "number" },
+          "fault_counts": { "type": "object" }
+        }
+      }
+    }
+  }
+}
